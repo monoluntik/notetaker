@@ -384,3 +384,19 @@ def test_scheduler_survives_failing_stage_and_logs_it(client, app, tag, caplog, 
     with app.state.sessionmaker() as db:
         reminders.deliver_pending(db, app.state.email_sender, T("2026-11-04T09:50:00"))
     assert len(emails(app)) == 1
+
+
+def test_repeated_scans_do_not_burn_delivery_ids(client, app, engine, tag):
+    """ON CONFLICT DO NOTHING расходует sequence; повторные сканы не должны этого делать."""
+    make_note(client, [tag["id"]], start_at="2026-11-05T10:00:00Z", reminders=[1440])
+    scan(app, "2026-11-04T09:00:00")
+    scan(app, "2026-11-04T10:00:00")  # напоминание «за день» создано
+
+    def seq():
+        with engine.connect() as c:
+            return c.execute(text("SELECT last_value FROM reminder_deliveries_id_seq")).scalar()
+
+    before = seq()
+    for m in range(1, 41):  # 40 тиков, пока событие остаётся в окне скана
+        scan(app, f"2026-11-04T10:{m:02d}:00")
+    assert seq() == before and len(rows(engine)) == 1

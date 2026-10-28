@@ -30,6 +30,7 @@ class Occurrence:
     tags: tuple[Tag, ...]
     is_recurring: bool = False
     is_exception: bool = False
+    note_version: int = 1
 
 
 def build_occurrence(note: Note, original_start: datetime, ov: OccurrenceOverride | None) -> Occurrence:
@@ -45,6 +46,7 @@ def build_occurrence(note: Note, original_start: datetime, ov: OccurrenceOverrid
         tags=tuple(note.tags),
         is_recurring=note.is_recurring,
         is_exception=ov is not None,
+        note_version=note.version,
     )
 
 
@@ -208,9 +210,9 @@ def update_occurrence(db: Session, note_id: int, original_start: datetime, data:
     return build_occurrence(note, orig, _find_override(note, orig))
 
 
-def cancel_occurrence(db: Session, note_id: int, original_start: datetime) -> None:
+def cancel_occurrence(db: Session, note_id: int, original_start: datetime, version: int) -> None:
     """Удаляет только одно вхождение серии."""
-    note, orig = _resolve(db, note_id, original_start)
+    note, orig = _resolve(db, note_id, original_start, version)
     ov = _find_override(note, orig)
     if ov is None:
         note.overrides.append(OccurrenceOverride(note_id=note.id, original_start=orig, is_cancelled=True))
@@ -220,9 +222,9 @@ def cancel_occurrence(db: Session, note_id: int, original_start: datetime) -> No
     db.commit()
 
 
-def reset_occurrence(db: Session, note_id: int, original_start: datetime) -> Occurrence:
+def reset_occurrence(db: Session, note_id: int, original_start: datetime, version: int) -> Occurrence:
     """Убирает исключение: вхождение снова как в серии (в т.ч. возвращает удалённое)."""
-    note, orig = _resolve(db, note_id, original_start)
+    note, orig = _resolve(db, note_id, original_start, version)
     ov = _find_override(note, orig)
     if ov is not None:
         note.overrides.remove(ov)

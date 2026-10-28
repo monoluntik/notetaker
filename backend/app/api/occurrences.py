@@ -6,7 +6,8 @@ from sqlalchemy.orm import Session
 
 from app.api.deps import get_db, get_now
 from app.errors import Invalid
-from app.schemas import OccurrenceOut, OccurrenceUpdate, UpcomingOut
+from app.schemas import NoteOut, NoteSplit, OccurrenceOut, OccurrenceUpdate, UpcomingOut
+from app.services import notes as notes_svc
 from app.services import occurrences as occ_svc
 from app.services.occurrences import occurrences_between
 from app.services.upcoming import get_upcoming
@@ -55,12 +56,20 @@ def update_occurrence(note_id: int, original_start: datetime, data: OccurrenceUp
 
 
 @router.delete("/notes/{note_id}/occurrences/{original_start}", status_code=204)
-def cancel_occurrence(note_id: int, original_start: datetime, db: Session = Depends(get_db)):
+def cancel_occurrence(note_id: int, original_start: datetime, version: Annotated[int, Query()],
+                      db: Session = Depends(get_db)):
     """Удаляет только одно вхождение серии."""
-    occ_svc.cancel_occurrence(db, note_id, original_start)
+    occ_svc.cancel_occurrence(db, note_id, original_start, version)
 
 
 @router.delete("/notes/{note_id}/occurrences/{original_start}/override", response_model=OccurrenceOut)
-def reset_occurrence(note_id: int, original_start: datetime, db: Session = Depends(get_db)):
+def reset_occurrence(note_id: int, original_start: datetime, version: Annotated[int, Query()],
+                     db: Session = Depends(get_db)):
     """Сбрасывает изменения вхождения к значениям серии (возвращает и удалённое вхождение)."""
-    return occ_svc.reset_occurrence(db, note_id, original_start)
+    return occ_svc.reset_occurrence(db, note_id, original_start, version)
+
+
+@router.post("/notes/{note_id}/occurrences/{original_start}/split", response_model=NoteOut, status_code=201)
+def split_series(note_id: int, original_start: datetime, data: NoteSplit, db: Session = Depends(get_db)):
+    """Изменяет серию начиная с этого вхождения; прошлые вхождения остаются как были (D17)."""
+    return notes_svc.split_series(db, note_id, original_start, data)

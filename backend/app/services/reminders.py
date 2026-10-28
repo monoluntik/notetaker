@@ -11,7 +11,7 @@ import logging
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
-from sqlalchemy import func, select, text
+from sqlalchemy import func, select, text, tuple_
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
@@ -59,42 +59,65 @@ def scan(db: Session, now: datetime) -> ScanResult:
     }
     created: list[ReminderDelivery] = []
     missed = 0
+    candidates: list[tuple] = []  # (occ, offset, fire_at)
     if notes_with_reminders:
         # Вхождения, которые ещё не начались к прошлому скану и начнутся не позже чем через сутки
         for occ in occurrences_between(db, watermark, now + MAX_OFFSET + timedelta(seconds=1)):
             if occ.note_id not in notes_with_reminders or not occ.is_active:
                 continue
-            offsets, note_updated_at = notes_with_reminders[occ.note_id]
-            for offset in offsets:
+            for offset in notes_with_reminders[occ.note_id][0]:
                 fire_at = occ.start_at - timedelta(minutes=offset)
-                if fire_at > now:
-                    continue
-                started = occ.start_at <= now
-                status = "missed" if started else ("pending" if email else "no_email")
-                row_id = db.scalar(
-                    insert(ReminderDelivery)
-                    .values(
-                        note_id=occ.note_id,
-                        original_start=occ.original_start,
-                        offset_minutes=offset,
-                        fire_at=fire_at,
-                        occurrence_start=occ.start_at,
-                        title=occ.title,
-                        status=status,
-                        # «С опозданием» — только если задержка вызвана простоем, а не тем, что
-                        # заметку создали/изменили уже после момента напоминания.
-                        late=now - fire_at > LATE_THRESHOLD and fire_at > note_updated_at,
-                        email_to=email if status == "pending" else None,
-                    )
-                    .on_conflict_do_nothing(constraint="uq_reminder_event")
-                    .returning(ReminderDelivery.id)
+                if fire_at <= now:
+                    candidates.append((occ, offset, fire_at))
+
+    # Уже обработанные события отбрасываем заранее одним запросом: INSERT … ON CONFLICT DO NOTHING
+    # расходует значение sequence даже при конфликте, а событие остаётся в окне скана до начала
+    # вхождения (до суток × 4 тика в минуту). ON CONFLICT остаётся защитой от гонок.
+    if candidates:
+        keys = {(o.note_id, o.original_start, off, f) for o, off, f in candidates}
+        existing = set(
+            db.execute(
+                select(
+                    ReminderDelivery.note_id, ReminderDelivery.original_start,
+                    ReminderDelivery.offset_minutes, ReminderDelivery.fire_at,
+                ).where(
+                    tuple_(
+                        ReminderDelivery.note_id, ReminderDelivery.original_start,
+                        ReminderDelivery.offset_minutes, ReminderDelivery.fire_at,
+                    ).in_(list(keys))
                 )
-                if row_id is None:
-                    continue  # уже обработано ранее
-                if started:
-                    missed += 1
-                else:
-                    created.append(db.get(ReminderDelivery, row_id))
+            ).tuples()
+        )
+        candidates = [c for c in candidates if (c[0].note_id, c[0].original_start, c[1], c[2]) not in existing]
+
+    for occ, offset, fire_at in candidates:
+        note_updated_at = notes_with_reminders[occ.note_id][1]
+        started = occ.start_at <= now
+        status = "missed" if started else ("pending" if email else "no_email")
+        row_id = db.scalar(
+            insert(ReminderDelivery)
+            .values(
+                note_id=occ.note_id,
+                original_start=occ.original_start,
+                offset_minutes=offset,
+                fire_at=fire_at,
+                occurrence_start=occ.start_at,
+                title=occ.title,
+                status=status,
+                # «С опозданием» — только если задержка вызвана простоем, а не тем, что
+                # заметку создали/изменили уже после момента напоминания.
+                late=now - fire_at > LATE_THRESHOLD and fire_at > note_updated_at,
+                email_to=email if status == "pending" else None,
+            )
+            .on_conflict_do_nothing(constraint="uq_reminder_event")
+            .returning(ReminderDelivery.id)
+        )
+        if row_id is None:
+            continue  # параллельный процесс успел первым
+        if started:
+            missed += 1
+        else:
+            created.append(db.get(ReminderDelivery, row_id))
     state.last_scan_at = now
     db.commit()
     if missed:

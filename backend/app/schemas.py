@@ -113,8 +113,8 @@ class NoteUpdate(BaseModel):
     is_active: bool | None = None
     recurrence: Recurrence | None = None  # явный null — отменить повторение
     reminders: Reminders | None = None
-    # Версия, с которой клиент начал редактирование. Если заметку уже изменили — 409 (D14).
-    version: int | None = None
+    # Версия, с которой клиент начал редактирование. Обязательна: если заметку уже изменили — 409 (D14).
+    version: int
 
 
 class NoteOut(ORM):
@@ -180,6 +180,7 @@ class OccurrenceOut(ORM):
     tags: list[TagOut]
     is_recurring: bool
     is_exception: bool
+    note_version: int  # нужна клиенту для правки/переноса вхождения (D14)
 
 
 class UpcomingOut(ORM):
@@ -200,7 +201,7 @@ class OccurrenceUpdate(BaseModel):
     body: Annotated[str, Field(max_length=20000)] | None = None
     start_at: AwareDatetime | None = None
     is_active: bool | None = None
-    version: int | None = None  # версия серии, см. NoteUpdate.version
+    version: int  # версия серии, см. NoteUpdate.version
 
 
 class NotificationOut(ORM):
@@ -217,3 +218,7 @@ class NotificationOut(ORM):
     late: bool
     created_at: UtcDatetime
     read_at: UtcDatetime | None
+
+
+class NoteSplit(NoteUpdate):
+    """Изменение серии начиная с выбранного вхождения: прошлые вхождения не меняются (D17)."""

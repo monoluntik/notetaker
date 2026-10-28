@@ -4,9 +4,9 @@ from sqlalchemy import Date, DateTime, Select, and_, cast, delete, func, literal
 from sqlalchemy.orm import Session
 
 from app.errors import Conflict, Invalid, NotFound
-from app.models import Note, NoteReminder, OccurrenceOverride, Tag, note_tags
-from app.schemas import NoteCreate, NoteUpdate, Recurrence, SortField, SortOrder
-from app.services.recurrence import local_date
+from app.models import Note, NoteReminder, OccurrenceOverride, ReminderDelivery, Tag, note_tags
+from app.schemas import NoteCreate, NoteSplit, NoteUpdate, Recurrence, SortField, SortOrder
+from app.services.recurrence import is_occurrence, local_date
 from app.services.settings import get_settings_row
 from app.timeutil import ensure_aware, utcnow
 
@@ -124,8 +124,70 @@ def update_note(db: Session, note_id: int, data: NoteUpdate) -> Note:
     return note
 
 
-def trash_note(db: Session, note_id: int) -> Note:
+def split_series(db: Session, note_id: int, original_start: datetime, data: NoteSplit) -> Note:
+    """Изменяет серию начиная с вхождения original_start; прошлые вхождения не меняются (D17).
+
+    Старая серия заканчивается накануне выбранного вхождения, с него начинается новая серия
+    с изменёнными полями. Если правило не меняется (то же время, пояс и частота), исключения
+    и журнал напоминаний будущих вхождений переходят к новой серии — повторных напоминаний нет.
+    """
+    note = _get_editable(db, note_id, data.version)
+    if not note.is_recurring:
+        raise Conflict("Заметка не повторяется: редактируйте её целиком")
+    orig = ensure_aware(original_start, "original_start")
+    if not is_occurrence(note.start_at, note.timezone, note.recurrence_freq, note.recurrence_until, orig):
+        raise NotFound("Такого вхождения в серии нет")
+    if local_date(orig, note.timezone) == local_date(note.start_at, note.timezone):
+        return update_note(db, note_id, data)  # с первого вхождения — это правка всей серии
+
+    fields = data.model_fields_set
+    tz = data.timezone if "timezone" in fields and data.timezone else note.timezone
+    start = ensure_aware(data.start_at, "start_at") if "start_at" in fields and data.start_at else orig
+    if "recurrence" in fields:
+        rec = data.recurrence
+    else:
+        rec = Recurrence(freq=note.recurrence_freq, until=note.recurrence_until)
+    new = Note(
+        title=data.title if "title" in fields and data.title is not None else note.title,
+        body=data.body if "body" in fields and data.body is not None else note.body,
+        start_at=start,
+        timezone=tz,
+        is_active=data.is_active if "is_active" in fields and data.is_active is not None else note.is_active,
+        tags=_load_tags(db, data.tag_ids) if "tag_ids" in fields and data.tag_ids else list(note.tags),
+        recurrence_freq=rec.freq if rec else "none",
+        recurrence_until=rec.until if rec else None,
+    )
+    reminders = data.reminders if "reminders" in fields and data.reminders is not None else note.reminders
+    new.reminder_rules = [NoteReminder(offset_minutes=m) for m in reminders]
+    _validate_recurrence(rec, start, tz)
+    db.add(new)
+    db.flush()
+
+    same_rule = start == orig and tz == note.timezone and new.recurrence_freq == note.recurrence_freq
+    future = [ov for ov in note.overrides if ov.original_start >= orig]
+    for ov in future:
+        note.overrides.remove(ov)
+        if same_rule:
+            new.overrides.append(
+                OccurrenceOverride(original_start=ov.original_start, is_cancelled=ov.is_cancelled, title=ov.title,
+                                   body=ov.body, start_at=ov.start_at, is_active=ov.is_active)
+            )
+    if same_rule:
+        db.query(ReminderDelivery).filter(
+            ReminderDelivery.note_id == note.id, ReminderDelivery.original_start >= orig
+        ).update({ReminderDelivery.note_id: new.id}, synchronize_session=False)
+
+    note.recurrence_until = local_date(orig, note.timezone) - timedelta(days=1)
+    note.version += 1
+    note.updated_at = func.now()
+    db.commit()
+    db.refresh(new)
+    return new
+
+
+def trash_note(db: Session, note_id: int, version: int) -> Note:
     note = lock_note(db, note_id)
+    check_version(note, version)
     if note.deleted_at is None:
         note.deleted_at = utcnow()
         note.version += 1
@@ -133,8 +195,9 @@ def trash_note(db: Session, note_id: int) -> Note:
     return note
 
 
-def restore_note(db: Session, note_id: int) -> Note:
+def restore_note(db: Session, note_id: int, version: int) -> Note:
     note = lock_note(db, note_id)
+    check_version(note, version)
     if note.deleted_at is not None:
         note.deleted_at = None
         note.version += 1
@@ -142,8 +205,9 @@ def restore_note(db: Session, note_id: int) -> Note:
     return note
 
 
-def purge_note(db: Session, note_id: int) -> None:
-    note = get_note(db, note_id)
+def purge_note(db: Session, note_id: int, version: int) -> None:
+    note = lock_note(db, note_id)
+    check_version(note, version)
     if note.deleted_at is None:
         raise Conflict("Окончательно удалить можно только заметку из корзины")
     db.delete(note)

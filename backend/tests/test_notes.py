@@ -145,7 +145,7 @@ def test_concurrent_edit_with_stale_version_is_rejected(client):
     assert b.status_code == 409 and "другой вкладке" in b.json()["detail"]
     assert client.get(f"/api/notes/{n['id']}").json()["title"] == "из вкладки A"  # правка A не потеряна
     assert client.patch(f"/api/notes/{n['id']}", json={"title": "B после обновления", "version": 2}).status_code == 200
-    # Без версии (перетаскивание в календаре, старые клиенты) — правка проходит
+    # (итерация 3) версия обязательна; SingleClient подставляет актуальную, как единственная вкладка
     assert client.patch(f"/api/notes/{n['id']}", json={"is_active": False}).json()["version"] == 4
 
 
