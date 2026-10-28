@@ -281,3 +281,42 @@ def test_reminder_already_due_at_creation_is_sent_immediately_not_late(client, a
     deliver(app, now)
     assert [(r["status"], r["late"]) for r in rows(engine)] == [("sent", False)]
     assert not emails(app)[0].subject.startswith("[с опозданием]")
+
+
+def _pending_while_smtp_down(client, app, **note_kw):
+    n = make_note(client, [make_tag(client, "smtp")["id"]], start_at="2026-11-04T10:00:00Z", reminders=[10], **note_kw)
+    app.state.email_sender.fail_times = 1  # почта недоступна в момент срабатывания
+    scan(app, "2026-11-04T09:00:00")
+    scan(app, "2026-11-04T09:50:00")
+    deliver(app, "2026-11-04T09:50:00")
+    return n
+
+
+@pytest.mark.parametrize("change, reason", [
+    (lambda c, n: c.delete(f"/api/notes/{n['id']}"), "заметка удалена"),
+    (lambda c, n: c.patch(f"/api/notes/{n['id']}", json={"is_active": False}), "заметка неактивна"),
+    (lambda c, n: c.patch(f"/api/notes/{n['id']}", json={"reminders": [60]}), "напоминание отключено"),
+    (lambda c, n: c.patch(f"/api/notes/{n['id']}", json={"start_at": "2026-11-04T12:00:00Z"}), "время заметки изменено"),
+])
+def test_pending_email_cancelled_when_note_changed(client, app, engine, tag, change, reason):
+    n = _pending_while_smtp_down(client, app)
+    change(client, n)
+    deliver(app, "2026-11-04T09:51:00")
+    assert emails(app) == []
+    with engine.connect() as c:
+        row = c.execute(text("SELECT status, last_error FROM reminder_deliveries")).one()
+    assert tuple(row) == ("cancelled", reason)
+
+
+def test_pending_email_cancelled_for_deleted_occurrence(client, app, engine, tag):
+    n = _pending_while_smtp_down(client, app, timezone="UTC", recurrence={"freq": "daily", "until": "2026-11-06"})
+    client.delete(f"/api/notes/{n['id']}/occurrences/2026-11-04T10:00:00Z")
+    deliver(app, "2026-11-04T09:51:00")
+    assert emails(app) == [] and rows(engine)[0]["status"] == "cancelled"
+
+
+def test_pending_email_still_sent_after_unrelated_edit(client, app, engine, tag):
+    n = _pending_while_smtp_down(client, app)
+    client.patch(f"/api/notes/{n['id']}", json={"body": "уточнение"})
+    deliver(app, "2026-11-04T09:51:00")
+    assert len(emails(app)) == 1 and rows(engine)[0]["status"] == "sent"

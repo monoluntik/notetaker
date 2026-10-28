@@ -22,7 +22,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def lifespan(app: FastAPI):
         app.state.scheduler = ReminderScheduler(
             app.state.sessionmaker, app.state.email_sender, app.state.hub,
-            lambda: app.state.clock(), settings.scheduler_interval_seconds,
+            lambda: app.state.clock(), settings.scheduler_interval_seconds, settings.trash_retention_days,
         )
         if settings.scheduler_enabled:
             app.state.scheduler.start()

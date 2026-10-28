@@ -145,6 +145,7 @@ SortOrder = Literal["asc", "desc"]
 class SettingsOut(ORM):
     email: str | None
     timezone: str
+    trash_retention_days: int = 30  # только чтение: из конфигурации сервера
 
 
 class SettingsUpdate(BaseModel):

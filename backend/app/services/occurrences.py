@@ -143,6 +143,18 @@ def _resolve(db: Session, note_id: int, original_start: datetime) -> tuple[Note,
     return note, original_start
 
 
+def current_occurrence(note: Note, original_start: datetime) -> Occurrence | None:
+    """Вхождение в текущем состоянии заметки или None, если его больше нет (удалено/правило изменилось)."""
+    if not note.is_recurring:
+        return build_occurrence(note, note.start_at, None)  # у обычной заметки вхождение одно
+    if not _is_valid_original(note, original_start):
+        return None
+    ov = _find_override(note, original_start)
+    if ov and ov.is_cancelled:
+        return None
+    return build_occurrence(note, original_start, ov)
+
+
 def get_occurrence(db: Session, note_id: int, original_start: datetime) -> Occurrence:
     note, orig = _resolve(db, note_id, original_start)
     ov = _find_override(note, orig)

@@ -17,7 +17,7 @@ from sqlalchemy.orm import Session
 
 from app.email import Email, EmailSender
 from app.models import Note, ReminderDelivery, SchedulerState
-from app.services.occurrences import occurrences_between
+from app.services.occurrences import current_occurrence, occurrences_between
 from app.services.settings import get_settings_row
 from app.timeutil import get_zone
 
@@ -117,6 +117,23 @@ def _render_email(d: ReminderDelivery, tz_name: str) -> Email:
     )
 
 
+def _obsolete_reason(db: Session, d: ReminderDelivery) -> str | None:
+    """Почему напоминание из очереди больше не нужно отправлять (None — отправлять)."""
+    note = db.get(Note, d.note_id)
+    if note is None or note.deleted_at is not None:
+        return "заметка удалена"
+    if d.offset_minutes not in note.reminders:
+        return "напоминание отключено"
+    occ = current_occurrence(note, d.original_start)
+    if occ is None:
+        return "вхождение удалено или серия изменена"
+    if not occ.is_active:
+        return "заметка неактивна"
+    if occ.start_at != d.occurrence_start:
+        return "время заметки изменено"  # для нового времени scan() создаст новое событие
+    return None
+
+
 def deliver_pending(db: Session, sender: EmailSender, now: datetime, limit: int = 50) -> int:
     """Отправляет ожидающие email. Возвращает число успешно отправленных писем."""
     sent = 0
@@ -132,6 +149,15 @@ def deliver_pending(db: Session, sender: EmailSender, now: datetime, limit: int 
         )
         if d is None:
             break
+        # Между сканом и отправкой (например, пока почта была недоступна) заметку могли удалить,
+        # деактивировать или перенести — такое письмо уже вводило бы в заблуждение.
+        reason = _obsolete_reason(db, d)
+        if reason:
+            d.status = "cancelled"
+            d.last_error = reason
+            db.commit()
+            log.info("reminder email cancelled: delivery=%s note=%s reason=%s", d.id, d.note_id, reason)
+            continue
         try:
             sender.send(_render_email(d, tz_name))
         except Exception as exc:  # noqa: BLE001 — любая ошибка адаптера = неудачная попытка

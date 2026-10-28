@@ -127,6 +127,13 @@ def purge_note(db: Session, note_id: int) -> None:
     db.commit()
 
 
+def purge_expired_trash(db: Session, now: datetime, retention_days: int) -> int:
+    """Окончательно удаляет заметки, лежащие в корзине дольше retention_days."""
+    result = db.execute(delete(Note).where(Note.deleted_at < now - timedelta(days=retention_days)))
+    db.commit()
+    return result.rowcount or 0
+
+
 def empty_trash(db: Session) -> int:
     result = db.execute(delete(Note).where(Note.deleted_at.is_not(None)))
     db.commit()

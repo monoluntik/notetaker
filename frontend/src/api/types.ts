@@ -40,6 +40,7 @@ export interface Page<T> {
 export interface UserSettings {
   email: string | null
   timezone: string
+  trash_retention_days?: number
 }
 
 export interface NoteInput {

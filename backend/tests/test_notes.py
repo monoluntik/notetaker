@@ -85,3 +85,51 @@ def test_empty_trash(client):
     assert client.delete("/api/trash").json() == {"deleted": 2}
     assert client.get("/api/trash").json()["total"] == 0
     assert client.get("/api/notes").json()["total"] == 1
+
+
+def test_trash_autopurge_after_retention_period(client, app, engine):
+    from datetime import UTC, datetime
+    from sqlalchemy import text
+    t = make_tag(client)
+    old = make_note(client, [t["id"]], title="old", reminders=[10])
+    fresh = make_note(client, [t["id"]], title="fresh")
+    active = make_note(client, [t["id"]], title="active")
+    client.delete(f"/api/notes/{old['id']}")
+    client.delete(f"/api/notes/{fresh['id']}")
+    with engine.begin() as c:
+        c.execute(text("UPDATE notes SET deleted_at = '2026-10-01T00:00:00Z' WHERE id = :i"), {"i": old["id"]})
+        c.execute(text("UPDATE notes SET deleted_at = '2026-10-10T00:00:00Z' WHERE id = :i"), {"i": fresh["id"]})
+        # «активная» заметка с очень старой датой не затрагивается
+        c.execute(text("UPDATE notes SET start_at = '2020-01-01T00:00:00Z' WHERE id = :i"), {"i": active["id"]})
+    app.state.clock = lambda: datetime(2026, 10, 31, 0, 0, 1, tzinfo=UTC)  # old пролежала 30 дней + 1 с
+    with client.websocket_connect("/ws") as ws:
+        ws.receive_json()
+        client.portal.call(app.state.scheduler.tick)
+        assert ws.receive_json() == {"type": "changed", "path": "/api/trash"}
+    assert client.get(f"/api/notes/{old['id']}").status_code == 404
+    assert [n["title"] for n in client.get("/api/trash").json()["items"]] == ["fresh"]
+    assert client.get(f"/api/notes/{active['id']}").status_code == 200
+    with engine.connect() as c:
+        assert c.execute(text("SELECT count(*) FROM note_reminders WHERE note_id = :i"), {"i": old["id"]}).scalar() == 0
+
+
+def test_trash_autopurge_respects_configured_retention(engine, settings):
+    from datetime import UTC, datetime, timedelta
+    from fastapi.testclient import TestClient
+    from app.main import create_app
+    app = create_app(settings.model_copy(update={"trash_retention_days": 7}))
+    now = datetime(2026, 10, 31, tzinfo=UTC)
+    app.state.clock = lambda: now
+    with TestClient(app) as c:
+        t = make_tag(c)
+        n = make_note(c, [t["id"]])
+        c.delete(f"/api/notes/{n['id']}")
+        with engine.begin() as conn:
+            from sqlalchemy import text
+            conn.execute(text("UPDATE notes SET deleted_at = :d"), {"d": now - timedelta(days=6)})
+        c.portal.call(app.state.scheduler.tick)
+        assert c.get("/api/trash").json()["total"] == 1
+        app.state.clock = lambda: now + timedelta(days=1, seconds=1)
+        c.portal.call(app.state.scheduler.tick)
+        assert c.get("/api/trash").json()["total"] == 0
+        assert c.get("/api/settings").json()["trash_retention_days"] == 7
