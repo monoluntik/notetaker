@@ -9,3 +9,4 @@ frontend/dist/
 playwright-report/
 test-results/
 .tmp/
+*.tmp.mjs
