@@ -453,3 +453,14 @@ def test_reactivated_before_due_keeps_all_reminders(client, app, tag):
     client.patch(f"/api/notes/{n['id']}", json={"is_active": True})
     assert [c.offset_minutes for c in scan(app, "2026-11-04T09:00:00").created] == [60]
     assert [c.offset_minutes for c in scan(app, "2026-11-04T09:50:00").created] == [10]
+
+
+def test_changing_reminder_interval_moves_the_reminder(client, app, engine, tag):
+    """«Изменение интервала напоминания переносит напоминания»: старый интервал не срабатывает, новый — да."""
+    n = make_note(client, [tag["id"]], start_at="2026-11-04T10:00:00Z", reminders=[10])
+    scan(app, "2026-11-04T08:00:00")
+    client.patch(f"/api/notes/{n['id']}", json={"reminders": [60]})
+    assert [c.offset_minutes for c in scan(app, "2026-11-04T09:00:00").created] == [60]
+    assert scan(app, "2026-11-04T09:50:00").created == []  # «за 10 минут» больше нет
+    deliver(app, "2026-11-04T09:50:00")
+    assert [r["offset_minutes"] for r in rows(engine)] == [60] and len(emails(app)) == 1

@@ -80,3 +80,20 @@ test('upcoming: a note moves to overdue without page reload', async ({ page, req
   await expect(overdue.getByText('Скоро начнётся')).toBeVisible()
   await expect(today.getByText('Скоро начнётся')).toHaveCount(0)
 })
+
+test('calendar and upcoming in another tab update without reload', async ({ context, request }) => {
+  await request.patch('/api/settings', { data: { timezone: 'Asia/Almaty' } })
+  const tag = await (await request.post('/api/tags', { data: { name: 'e2e-sync-views' } })).json()
+  const cal = await context.newPage()
+  const up = await context.newPage()
+  const start = new Date(Date.now() + 3 * 3600e3)
+  const day = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Almaty' }).format(start) // yyyy-mm-dd
+  await cal.goto(`/calendar?view=day&date=${day}`)
+  await up.goto('/')
+  await expectOnline(cal)
+  await expectOnline(up)
+  // Изменение «из другого клиента» (через API) — обе вкладки обновляются по WebSocket
+  await request.post('/api/notes', { data: { title: 'Синхронизация видов', start_at: start.toISOString(), tag_ids: [tag.id] } })
+  await expect(cal.locator('.cal-item', { hasText: 'Синхронизация видов' })).toBeVisible()
+  await expect(up.getByText('Синхронизация видов')).toBeVisible()
+})
