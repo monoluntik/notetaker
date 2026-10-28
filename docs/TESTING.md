@@ -72,3 +72,31 @@ cd frontend && npm run e2e                    # Playwright: сам подним�
 [13:20:18] deliveries: [(10, 'sent', 1), (60, 'sent', 1)]
 [13:20:18] RESULT: OK
 ```
+
+## Итерация 2 (ветка `improve/notetaker-compliance`)
+| Время | Команда | Результат |
+|---|---|---|
+| 2026-10-28 13:47 | `pytest -q` / `npm test` (исходно) | 71 passed / 17 passed |
+| 2026-10-28 13:48 | `pytest tests/test_probe_compliance.py` | 5 failed (подтверждённые дефекты), 2 passed |
+| 2026-10-28 13:50 | `pytest -q -s tests/test_upcoming.py` | 7 passed; 5000 прошедших + серия 2 года: 0.24 с |
+| 2026-10-28 13:54 | `pytest -q` | 87 passed (пробы заменены постоянными тестами) |
+| 2026-10-28 13:56 | `npm run e2e` ×3 | 1-й запуск: 6 passed / 1 failed (локатор теста при общей БД); после исправления 7 passed ×3, 1 письмо на прогон |
+| 2026-10-28 13:58 | EXPLAIN ANALYZE, 20 000 заметок | список 3 мс, поиск с подзапросом 12 мс, тег+период 0.4 мс, кандидаты автоочистки 0.1 мс, сортировка по изменению 7 мс |
+| 2026-10-28 13:59 | `pytest -q` ×3 | 90 passed каждый раз |
+| 2026-10-28 13:59 | `npm test` / `npm run build` / `eslint src e2e` | 17 passed / OK / OK |
+| 2026-10-28 13:59 | `npm run e2e` ×3 | 7 passed каждый раз, по 1 письму |
+| 2026-10-28 14:00 | `python scripts/restart_check.py` | RESULT: OK (SIGKILL + 2 рестарта, 2 письма, `(10,'sent',1)`, `(60,'sent',1)`) |
+| 2026-10-28 14:00 | `docker compose config -q` | OK |
+| 2026-10-28 14:00 | `docker compose ps` | **не выполнено**: permission denied на `docker.sock` |
+
+Новые тесты итерации 2: `test_list.py::test_search_matches_edited_occurrence`;
+`test_upcoming.py::test_overdue_has_no_hidden_cutoff`, `::test_overdue_performance`;
+`test_reminders.py::test_pending_email_cancelled_when_note_changed` (4 случая),
+`::test_pending_email_cancelled_for_deleted_occurrence`, `::test_pending_email_still_sent_after_unrelated_edit`,
+`::test_restored_note_resumes_reminders`, `::test_reactivated_note_gets_reminders`,
+`::test_email_failures_are_logged_with_context`, `::test_missed_reminders_are_logged`,
+`::test_scheduler_survives_failing_stage_and_logs_it`;
+`test_notes.py::test_trash_autopurge_after_retention_period`, `::test_trash_autopurge_respects_configured_retention`,
+`::test_concurrent_edit_with_stale_version_is_rejected`, `::test_simultaneous_edits_exactly_one_wins`,
+`::test_version_changes_on_trash_restore_and_occurrence_edits`; vitest `upcoming.test.ts` (итог прошедших);
+e2e `conflict.spec.ts` (2 сценария).
