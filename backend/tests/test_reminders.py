@@ -338,3 +338,49 @@ def test_reactivated_note_gets_reminders(client, app, tag):
     assert scan(app, "2026-11-04T09:50:00").created == []
     client.patch(f"/api/notes/{n['id']}", json={"is_active": True})
     assert len(scan(app, "2026-11-04T09:51:00").created) == 1
+
+
+def test_email_failures_are_logged_with_context(client, app, tag, caplog):
+    import logging
+    make_note(client, [tag["id"]], start_at="2026-11-04T10:00:00Z", reminders=[10])
+    app.state.email_sender.fail_times = 100
+    scan(app, "2026-11-04T09:00:00")
+    scan(app, "2026-11-04T09:50:00")
+    with caplog.at_level(logging.INFO, logger="notetaker"):
+        for _ in range(reminders.MAX_ATTEMPTS):
+            deliver(app, "2026-11-04T09:50:00")
+    warnings = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+    errors = [r.getMessage() for r in caplog.records if r.levelno == logging.ERROR]
+    assert len(warnings) == 4 and "attempt=1/5" in warnings[0] and "will retry" in warnings[0]
+    assert "m***@example.com" in warnings[0] and "me@example.com" not in warnings[0]
+    assert len(errors) == 1 and "gave up after 5 attempts" in errors[0] and "ConnectionError" in errors[0]
+
+
+def test_missed_reminders_are_logged(client, app, tag, caplog):
+    import logging
+    make_note(client, [tag["id"]], start_at="2026-11-04T10:00:00Z", reminders=[10])
+    scan(app, "2026-11-04T09:45:00")
+    with caplog.at_level(logging.INFO, logger="notetaker"):
+        scan(app, "2026-11-04T10:15:00")
+    assert any("1 reminder(s) marked missed" in r.getMessage() for r in caplog.records)
+
+
+def test_scheduler_survives_failing_stage_and_logs_it(client, app, tag, caplog, monkeypatch):
+    import logging
+    make_note(client, [tag["id"]], start_at="2026-11-04T10:00:00Z", reminders=[10])
+    app.state.clock = lambda: T("2026-11-04T09:00:00")
+    client.portal.call(app.state.scheduler.tick)
+
+    def broken_scan():
+        raise RuntimeError("БД недоступна (имитация)")
+
+    monkeypatch.setattr(app.state.scheduler, "_scan", broken_scan)
+    app.state.clock = lambda: T("2026-11-04T09:50:00")
+    with caplog.at_level(logging.INFO, logger="notetaker"):
+        client.portal.call(app.state.scheduler.tick)  # не падает
+    assert any("stage 'scan' failed" in r.getMessage() for r in caplog.records)
+    monkeypatch.undo()
+    client.portal.call(app.state.scheduler.tick)  # следующий тик восстанавливается
+    with app.state.sessionmaker() as db:
+        reminders.deliver_pending(db, app.state.email_sender, T("2026-11-04T09:50:00"))
+    assert len(emails(app)) == 1

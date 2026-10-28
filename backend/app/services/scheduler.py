@@ -42,10 +42,20 @@ class ReminderScheduler:
             return notes_svc.purge_expired_trash(db, self.clock(), self.trash_retention_days)
 
     async def tick(self) -> None:
-        created = await asyncio.to_thread(self._scan)
-        for n in created:
-            await self.hub.broadcast({"type": "reminder", "notification": n})
-        await asyncio.to_thread(self._deliver)
+        # Стадии независимы: сбой отправки почты не должен мешать уведомлениям и наоборот.
+        stage = "scan"
+        try:
+            created = await asyncio.to_thread(self._scan)
+            stage = "notify"
+            for n in created:
+                await self.hub.broadcast({"type": "reminder", "notification": n})
+        except Exception:
+            log.exception("scheduler stage '%s' failed; reminders will be re-checked on the next tick "
+                          "(no duplicates: events are deduplicated by key)", stage)
+        try:
+            await asyncio.to_thread(self._deliver)
+        except Exception:
+            log.exception("scheduler stage 'deliver' failed; pending emails stay queued for the next tick")
         purged = await asyncio.to_thread(self._purge_trash)
         if purged:
             log.info("trash auto-purge: %s note(s) older than %s days deleted", purged, self.trash_retention_days)
@@ -56,7 +66,7 @@ class ReminderScheduler:
             try:
                 await self.tick()
             except Exception:  # планировщик не должен умирать из-за одной ошибки
-                log.exception("scheduler tick failed")
+                log.exception("scheduler tick failed; next attempt in %ss", self.interval)
             await asyncio.sleep(self.interval)
 
     def start(self) -> None:

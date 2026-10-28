@@ -93,12 +93,24 @@ def scan(db: Session, now: datetime) -> ScanResult:
                     continue  # уже обработано ранее
                 if started:
                     missed += 1
-                    log.info("reminder missed (note=%s, start=%s)", occ.note_id, occ.start_at)
                 else:
                     created.append(db.get(ReminderDelivery, row_id))
     state.last_scan_at = now
     db.commit()
+    if missed:
+        log.warning(
+            "%s reminder(s) marked missed: event already started when the scheduler ran "
+            "(downtime %s → %s, policy D7: not sent)", missed, watermark.isoformat(), now.isoformat(),
+        )
     return ScanResult(created=created, missed=missed)
+
+
+def mask_email(addr: str | None) -> str:
+    """m***@example.com — адрес в логах без полного раскрытия."""
+    if not addr or "@" not in addr:
+        return "-"
+    local, domain = addr.split("@", 1)
+    return f"{local[:1]}***@{domain}"
 
 
 def _render_email(d: ReminderDelivery, tz_name: str) -> Email:
@@ -162,18 +174,29 @@ def deliver_pending(db: Session, sender: EmailSender, now: datetime, limit: int 
             sender.send(_render_email(d, tz_name))
         except Exception as exc:  # noqa: BLE001 — любая ошибка адаптера = неудачная попытка
             d.attempts += 1
-            d.last_error = str(exc)[:500]
+            d.last_error = f"{type(exc).__name__}: {exc}"[:500]
             if d.attempts >= MAX_ATTEMPTS:
                 d.status = "failed"
             db.commit()
-            log.warning("email failed (delivery=%s, attempt=%s): %s", d.id, d.attempts, exc)
-            if d.status == "pending":
-                break  # почта недоступна — повторим на следующем тике
-            continue
+            if d.status == "failed":
+                log.error(
+                    "email delivery gave up after %s attempts: delivery=%s note=%s to=%s last_error=%s "
+                    "(in-app notification was shown; email will not be retried)",
+                    d.attempts, d.id, d.note_id, mask_email(d.email_to), d.last_error,
+                )
+                continue
+            log.warning(
+                "email delivery failed: delivery=%s note=%s to=%s attempt=%s/%s error=%s; "
+                "will retry on the next scheduler tick",
+                d.id, d.note_id, mask_email(d.email_to), d.attempts, MAX_ATTEMPTS, d.last_error,
+            )
+            break  # почта недоступна — остальные письма тоже подождут следующего тика
         d.status = "sent"
         d.attempts += 1
         d.sent_at = now
         db.commit()  # строка оставалась заблокированной до фиксации статуса
+        log.info("reminder email sent: delivery=%s note=%s to=%s attempt=%s",
+                 d.id, d.note_id, mask_email(d.email_to), d.attempts)
         sent += 1
     return sent
 

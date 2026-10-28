@@ -1,3 +1,4 @@
+import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
@@ -14,8 +15,21 @@ from app.services.scheduler import ReminderScheduler
 from app.timeutil import utcnow
 
 
+def setup_logging(level: str) -> None:
+    """Логи приложения (notetaker.*) в stderr. Без этого uvicorn показывал только WARNING и выше,
+    и сообщения планировщика уровня INFO (пропущенные/отменённые напоминания) терялись."""
+    logger = logging.getLogger("notetaker")
+    logger.setLevel(level.upper())
+    if not any(getattr(h, "_notetaker", False) for h in logger.handlers):
+        handler = logging.StreamHandler()
+        handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s [%(name)s] %(message)s"))
+        handler._notetaker = True  # type: ignore[attr-defined]
+        logger.addHandler(handler)
+
+
 def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or get_settings()
+    setup_logging(settings.log_level)
     engine = make_engine(settings.database_url)
 
     @asynccontextmanager
@@ -26,6 +40,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         )
         if settings.scheduler_enabled:
             app.state.scheduler.start()
+            logging.getLogger("notetaker.scheduler").info(
+                "scheduler started: interval=%ss email_backend=%s trash_retention=%sd",
+                settings.scheduler_interval_seconds, settings.email_backend, settings.trash_retention_days,
+            )
         yield
         await app.state.scheduler.stop()
         engine.dispose()
