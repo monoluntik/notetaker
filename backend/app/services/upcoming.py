@@ -17,7 +17,8 @@ from app.services.settings import get_settings_row
 from app.timeutil import get_zone
 
 DEFAULT_OVERDUE_LIMIT = 50
-SECTION_LIMIT = 200  # «сегодня» и «неделя»: больше в одном разделе не показываем, итог — всегда точный
+SECTION_LIMIT = 200
+TOTAL_CAP = 10_000  # итоги разделов точны до этого числа; больше — «10 000+» (флаг *_capped)  # «сегодня» и «неделя»: больше в одном разделе не показываем, итог — всегда точный
 
 
 @dataclass
@@ -32,6 +33,9 @@ class Upcoming:
     overdue_total: int
     today_total: int
     week_total: int
+    overdue_total_capped: bool = False
+    today_total_capped: bool = False
+    week_total_capped: bool = False
 
 
 def local_bounds(now: datetime, tz_name: str) -> tuple[datetime, datetime, datetime]:
@@ -71,7 +75,11 @@ def get_upcoming(db: Session, now: datetime, overdue_limit: int = DEFAULT_OVERDU
         today=occurrences_between(db, now, day_end, limit=SECTION_LIMIT),
         week=occurrences_between(db, day_end, week_end, limit=SECTION_LIMIT),
         overdue=_latest_overdue(db, now, earliest, overdue_limit),
-        overdue_total=count_occurrences(db, earliest, now, active_only=True),
-        today_total=count_occurrences(db, now, day_end),
-        week_total=count_occurrences(db, day_end, week_end),
+        **_total("overdue", count_occurrences(db, earliest, now, active_only=True, cap=TOTAL_CAP)),
+        **_total("today", count_occurrences(db, now, day_end, cap=TOTAL_CAP)),
+        **_total("week", count_occurrences(db, day_end, week_end, cap=TOTAL_CAP)),
     )
+
+
+def _total(name: str, n: int) -> dict:
+    return {f"{name}_total": min(n, TOTAL_CAP), f"{name}_total_capped": n > TOTAL_CAP}

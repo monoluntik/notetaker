@@ -54,16 +54,16 @@ function Sections({ data, now, tz, overdueLimit, onMore }: { data: Upcoming; now
   return (
     <div className="upcoming-grid">
       <div className="stack" style={{ gap: 'var(--s5)' }}>
-        <Section title="Сегодня" items={s.today} total={Math.max(s.today.length, data.today_total ?? 0)} tz={tz} timeOnly empty="На сегодня больше ничего не запланировано" />
-        <Section title="На этой неделе" items={s.week} total={Math.max(s.week.length, data.week_total ?? 0)} tz={tz} empty="До конца недели заметок нет" />
+        <Section title="Сегодня" items={s.today} total={Math.max(s.today.length, data.today_total ?? 0)} capped={data.today_total_capped} tz={tz} timeOnly empty="На сегодня больше ничего не запланировано" />
+        <Section title="На этой неделе" items={s.week} total={Math.max(s.week.length, data.week_total ?? 0)} capped={data.week_total_capped} tz={tz} empty="До конца недели заметок нет" />
       </div>
       <div className="stack">
-        <Section title="Прошедшие активные" items={s.overdue} total={s.overdueTotal} tz={tz} overdue
+        <Section title="Прошедшие активные" items={s.overdue} total={s.overdueTotal} capped={data.overdue_total_capped} tz={tz} overdue
           empty="Нет активных заметок, время которых прошло"
           hint="Все активные заметки, время которых прошло. Отметьте заметку неактивной, чтобы убрать её отсюда." />
         {s.overdue.length < s.overdueTotal && (
           <p className="muted small" data-testid="overdue-more">
-            Показано {s.overdue.length} из {s.overdueTotal}.{' '}
+            Показано {s.overdue.length} из {s.overdueTotal.toLocaleString('ru')}{data.overdue_total_capped ? '+' : ''}.{' '}
             <button className="btn btn-sm" onClick={onMore} disabled={overdueLimit >= 1000}>Показать ещё</button>
             {overdueLimit >= 1000 && ' Остальные — в разделе «Заметки» с фильтром «Активные» и периодом.'}
           </p>
@@ -73,16 +73,16 @@ function Sections({ data, now, tz, overdueLimit, onMore }: { data: Upcoming; now
   )
 }
 
-function Section({ title, items, total, tz, empty, timeOnly, hint, overdue }: {
-  title: string; items: Occurrence[]; total?: number; tz: string; empty: string; timeOnly?: boolean; hint?: string; overdue?: boolean
+function Section({ title, items, total, capped, tz, empty, timeOnly, hint, overdue }: {
+  title: string; items: Occurrence[]; total?: number; capped?: boolean; tz: string; empty: string; timeOnly?: boolean; hint?: string; overdue?: boolean
 }) {
   const open = useOpenEditor()
   return (
     <section className={`card section-card ${overdue ? 'overdue' : ''}`} data-testid={`section-${title}`} aria-label={title}>
-      <h2>{title} <span className="count">{total ?? items.length}</span></h2>
+      <h2>{title} <span className="count">{(total ?? items.length).toLocaleString('ru')}{capped ? '+' : ''}</span></h2>
       {hint && <p className="muted xsmall">{hint}</p>}
       {total !== undefined && total > items.length && !overdue && (
-        <p className="muted xsmall">Показаны первые {items.length} из {total}. Все — в календаре или в списке заметок.</p>
+        <p className="muted xsmall">Показаны первые {items.length} из {total.toLocaleString('ru')}{capped ? '+' : ''}. Все — в календаре или в списке заметок.</p>
       )}
       {items.length === 0 ? (
         <EmptyState icon={overdue ? 'check' : 'sun'} title={empty} />

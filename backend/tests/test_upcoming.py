@@ -142,3 +142,43 @@ def test_upcoming_sections_are_capped_with_exact_totals(client, at):
         up.SECTION_LIMIT = old
     assert [o["title"] for o in d["today"]] == ["today0", "today1", "today2"] and d["today_total"] == 8
     assert d["week_total"] == 0
+
+
+def test_totals_are_capped_honestly(client, at, engine):
+    import app.services.upcoming as up
+    from sqlalchemy import text
+    t = make_tag(client)
+    at("2026-11-04T12:00:00Z")
+    with engine.begin() as c:
+        c.execute(text("""INSERT INTO notes (title, body, start_at, timezone)
+                          SELECT 'p' || g, '', timestamptz '2026-11-01 00:00Z' + (g || ' minutes')::interval, 'UTC'
+                          FROM generate_series(1, 30) g"""))
+        c.execute(text("INSERT INTO note_tags SELECT id, :t FROM notes"), {"t": t["id"]})
+    old = up.TOTAL_CAP
+    up.TOTAL_CAP = 25
+    try:
+        d = client.get("/api/upcoming").json()
+    finally:
+        up.TOTAL_CAP = old
+    assert d["overdue_total"] == 25 and d["overdue_total_capped"] is True
+    assert d["today_total_capped"] is False
+    d = client.get("/api/upcoming").json()
+    assert d["overdue_total"] == 30 and d["overdue_total_capped"] is False
+
+
+def test_list_total_is_capped_honestly(client, engine, monkeypatch):
+    import app.services.notes as notes_svc
+    from sqlalchemy import text
+    t = make_tag(client)
+    with engine.begin() as c:
+        c.execute(text("""INSERT INTO notes (title, body, start_at, timezone)
+                          SELECT 'p' || g, '', timestamptz '2026-11-01 00:00Z' + (g || ' minutes')::interval, 'UTC'
+                          FROM generate_series(1, 30) g"""))
+        c.execute(text("INSERT INTO note_tags SELECT id, :t FROM notes"), {"t": t["id"]})
+    monkeypatch.setattr(notes_svc, "TOTAL_CAP", 25)
+    r = client.get("/api/notes", params={"page_size": 10}).json()
+    assert (r["total"], r["total_capped"]) == (25, True)
+    r = client.get("/api/notes", params={"q": "p1"}).json()  # p1, p10..p19
+    assert (r["total"], r["total_capped"]) == (11, False)
+    assert client.get("/api/tags", params={"with_counts": "false"}).json()[0]["note_count"] is None
+    assert client.get("/api/tags").json()[0]["note_count"] == 30

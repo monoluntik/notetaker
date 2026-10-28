@@ -70,7 +70,7 @@ class TagOut(ORM):
 
 
 class TagWithCount(TagOut):
-    note_count: int
+    note_count: int | None  # None, если запрошено with_counts=false
 
 
 # ---------- Notes ----------
@@ -135,7 +135,8 @@ class NoteOut(ORM):
 
 class Page[T](BaseModel):
     items: list[T]
-    total: int
+    total: int  # точное число найденных, если total_capped = false; иначе нижняя граница
+    total_capped: bool = False
     page: int
     page_size: int
 
@@ -194,6 +195,10 @@ class UpcomingOut(ORM):
     overdue_total: int  # всего прошедших активных; в overdue — первые overdue_limit
     today_total: int  # всего на сегодня; в today — не больше 200
     week_total: int
+    # true — итог больше 10 000, в *_total — 10 000 (интерфейс пишет «10 000+»)
+    overdue_total_capped: bool
+    today_total_capped: bool
+    week_total_capped: bool
 
 
 class OccurrenceUpdate(BaseModel):

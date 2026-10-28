@@ -1,6 +1,6 @@
 from datetime import datetime, timedelta
 
-from sqlalchemy import Date, DateTime, Select, and_, cast, delete, func, literal, or_, select, union
+from sqlalchemy import ARRAY, Date, DateTime, Integer, Select, and_, cast, delete, func, literal, or_, select
 from sqlalchemy.orm import Session
 
 from app.errors import Conflict, Invalid, NotFound
@@ -21,6 +21,7 @@ def _load_tags(db: Session, tag_ids: list[int]) -> list[Tag]:
 
 
 MAX_SERIES_SPAN = timedelta(days=5 * 366)
+TOTAL_CAP = 10_000  # точный подсчёт найденных — до этого числа, дальше «10 000+»
 
 
 def _validate_recurrence(rec: Recurrence | None, start_at: datetime, tz: str) -> None:
@@ -231,9 +232,23 @@ def _escape_like(s: str) -> str:
     return s.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
 
+def matching_override_note_ids(db: Session, q: str | None) -> list[int]:
+    """id серий, у которых изменённый заголовок/текст вхождения содержит q (таблица исключений мала)."""
+    if not q or not q.strip():
+        return []
+    pattern = f"%{_escape_like(q.strip())}%"
+    return list(db.scalars(
+        select(OccurrenceOverride.note_id).distinct().where(
+            OccurrenceOverride.is_cancelled.is_(False),
+            or_(OccurrenceOverride.title.ilike(pattern, escape="\\"), OccurrenceOverride.body.ilike(pattern, escape="\\")),
+        )
+    ))
+
+
 def build_list_query(
     *,
     q: str | None = None,
+    override_ids: list[int] | None = None,
     tag_ids: list[int] | None = None,
     active: bool | None = None,
     date_from: datetime | None = None,
@@ -244,21 +259,18 @@ def build_list_query(
     if q and q.strip():
         pattern = f"%{_escape_like(q.strip())}%"
         # Серия находится и по изменённому заголовку/тексту отдельного (не удалённого) вхождения.
-        # Объединение (UNION) трёх поисков, а не OR: с OR и подзапросом PostgreSQL не может
-        # использовать trigram-индексы и перебирает всю таблицу (EXPLAIN: 78 мс → 1.2 мс на 100k,
-        # см. docs/LOADTEST.md).
-        matching = union(
-            select(Note.id).where(Note.title.ilike(pattern, escape="\\")),
-            select(Note.id).where(Note.body.ilike(pattern, escape="\\")),
-            select(OccurrenceOverride.note_id).where(
-                OccurrenceOverride.is_cancelled.is_(False),
-                or_(
-                    OccurrenceOverride.title.ilike(pattern, escape="\\"),
-                    OccurrenceOverride.body.ilike(pattern, escape="\\"),
-                ),
-            ),
+        # Все три условия индексируемые: trigram-индексы по title/body и первичный ключ для id
+        # (id серий с подходящими исключениями — из маленькой таблицы исключений, заранее).
+        # Тогда планировщик сам выбирает: BitmapOr по индексам для редкого слова или обход в
+        # порядке сортировки для частого (docs/LOADTEST.md). OR с подзапросом давал полный
+        # перебор таблицы, UNION — сотни тысяч id для частых слов.
+        stmt = stmt.where(
+            or_(
+                Note.title.ilike(pattern, escape="\\"),
+                Note.body.ilike(pattern, escape="\\"),
+                Note.id == func.any(literal(override_ids or [0], ARRAY(Integer))),
+            )
         )
-        stmt = stmt.where(Note.id.in_(matching))
     if tag_ids:
         # «любой из выбранных тегов»
         stmt = stmt.where(Note.id.in_(select(note_tags.c.note_id).where(note_tags.c.tag_id.in_(tag_ids))))
@@ -287,12 +299,20 @@ def list_notes(
     sort: SortField = "start_at",
     order: SortOrder = "asc",
     **filters,
-) -> tuple[list[Note], int]:
+) -> tuple[list[Note], int, bool]:
+    """Страница заметок, число найденных и признак «больше TOTAL_CAP» (тогда total = TOTAL_CAP).
+
+    Точный count(*) по миллионам строк стоил сотни миллисекунд на каждый запрос страницы
+    (docs/LOADTEST.md); интерфейсу достаточно «10 000+»."""
+    filters["override_ids"] = matching_override_note_ids(db, filters.get("q"))
     base = build_list_query(**filters)
-    total = db.scalar(select(func.count()).select_from(base.order_by(None).subquery())) or 0
+    capped_rows = base.order_by(None).with_only_columns(Note.id).limit(TOTAL_CAP + 1).subquery()
+    total = db.scalar(select(func.count()).select_from(capped_rows)) or 0
+    capped = total > TOTAL_CAP
+    total = min(total, TOTAL_CAP)
     col = Note.start_at if sort == "start_at" else Note.updated_at
     ordering = [col.asc(), Note.id.asc()] if order == "asc" else [col.desc(), Note.id.desc()]
     if filters.get("deleted"):
         ordering = [Note.deleted_at.desc(), Note.id.desc()]
     items = db.scalars(base.order_by(*ordering).offset((page - 1) * page_size).limit(page_size)).all()
-    return list(items), total
+    return list(items), total, capped

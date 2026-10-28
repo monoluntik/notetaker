@@ -6,20 +6,18 @@ from app.models import Note, Tag, note_tags
 from app.schemas import TagCreate, TagUpdate
 
 
-def list_tags(db: Session) -> list[tuple[Tag, int]]:
-    counts = (
-        select(note_tags.c.tag_id, func.count().label("n"))
-        .join(Note, Note.id == note_tags.c.note_id)
-        .where(Note.deleted_at.is_(None))
-        .group_by(note_tags.c.tag_id)
-        .subquery()
-    )
-    rows = db.execute(
-        select(Tag, func.coalesce(counts.c.n, 0))
-        .outerjoin(counts, counts.c.tag_id == Tag.id)
-        .order_by(func.lower(Tag.name))
-    ).all()
-    return [(t, n) for t, n in rows]
+def list_tags(db: Session, with_counts: bool = True) -> list[tuple[Tag, int | None]]:
+    tags = db.scalars(select(Tag).order_by(func.lower(Tag.name))).all()
+    if not with_counts:
+        return [(t, None) for t in tags]
+    # Число заметок вне корзины = все связи тега − связи заметок в корзине. Соединение 21 млн
+    # связей с заметками стоило ~1.7 с на 10M (docs/LOADTEST.md), вычитание — ~0.3 с.
+    total = dict(db.execute(select(note_tags.c.tag_id, func.count()).group_by(note_tags.c.tag_id)).tuples().all())
+    trashed = dict(db.execute(
+        select(note_tags.c.tag_id, func.count()).join(Note, Note.id == note_tags.c.note_id)
+        .where(Note.deleted_at.is_not(None)).group_by(note_tags.c.tag_id)
+    ).tuples().all())
+    return [(t, total.get(t.id, 0) - trashed.get(t.id, 0)) for t in tags]
 
 
 def get_tag(db: Session, tag_id: int) -> Tag:

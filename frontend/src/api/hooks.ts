@@ -18,8 +18,14 @@ export function useUserTz(): string {
   return data?.timezone ?? Intl.DateTimeFormat().resolvedOptions().timeZone
 }
 
+/** Теги без подсчёта заметок — для форм и фильтров (подсчёт дорог на больших объёмах). */
 export function useTags() {
-  return useQuery({ queryKey: keys.tags, queryFn: () => api<TagWithCount[]>('/tags') })
+  return useQuery({ queryKey: [...keys.tags, 'plain'], queryFn: () => api<TagWithCount[]>('/tags?with_counts=false') })
+}
+
+/** Теги с числом заметок — только для страницы «Теги». */
+export function useTagsWithCounts() {
+  return useQuery({ queryKey: [...keys.tags, 'counts'], queryFn: () => api<TagWithCount[]>('/tags') })
 }
 
 export function useInvalidateAll() {

@@ -1,6 +1,6 @@
 import { useState, type FormEvent } from 'react'
 import { Link } from 'react-router-dom'
-import { useCreateTag, useDeleteTag, useTags, useUpdateTag } from '../api/hooks'
+import { useCreateTag, useDeleteTag, useTagsWithCounts, useUpdateTag } from '../api/hooks'
 import type { TagWithCount } from '../api/types'
 import { useConfirm, useToast } from '../components/ui/feedback'
 import { Icon } from '../components/ui/Icon'
@@ -27,7 +27,7 @@ function ColorPalette({ value, onChange, label }: { value: string; onChange: (c:
 }
 
 export function TagsPage() {
-  const { data: tags, isLoading, error, refetch } = useTags()
+  const { data: tags, isLoading, error, refetch } = useTagsWithCounts()
   const create = useCreateTag()
   const toast = useToast()
   const [name, setName] = useState('')
@@ -139,7 +139,7 @@ function TagCard({ tag }: { tag: TagWithCount }) {
       </div>
       {editingColor && <ColorPalette value={tag.color} onChange={recolor} label={`Цвет тега ${tag.name}`} />}
       <div className="row small muted">
-        <Link to={`/notes?tag=${tag.id}`}>{tag.note_count ? `${tag.note_count} заметок` : 'Нет заметок'}</Link>
+        <Link to={`/notes?tag=${tag.id}`}>{tag.note_count ? `${tag.note_count.toLocaleString('ru')} заметок` : 'Нет заметок'}</Link>
         {dirty && <span className="xsmall">Enter — сохранить, Esc — отменить</span>}
       </div>
       {error && <div className="banner banner-error" role="alert"><Icon name="alert" /><div>{error}</div></div>}

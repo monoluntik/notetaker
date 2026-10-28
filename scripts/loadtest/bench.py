@@ -206,8 +206,13 @@ def main():
                 ("calendar: week window", "/occurrences", {"from": now.isoformat(), "to": (now.replace(microsecond=0) + __import__('datetime').timedelta(days=7)).isoformat()}),
                 ("calendar: month window", "/occurrences", {"from": month_from.isoformat(),
                                                             "to": (month_from + __import__('datetime').timedelta(days=31)).isoformat()}),
+                ("calendar: month, heavy user (tag)", "/occurrences", {"from": month_from.isoformat(), "tag": heavy[0],
+                                                                       "to": (month_from + __import__('datetime').timedelta(days=31)).isoformat()}),
+                ("calendar: month, median user (tag)", "/occurrences", {"from": month_from.isoformat(), "tag": median_user[0],
+                                                                        "to": (month_from + __import__('datetime').timedelta(days=31)).isoformat()}),
                 ("upcoming (today/week/overdue)", "/upcoming", {"overdue_limit": 50}),
                 ("tags with counts (1020 tags)", "/tags", None),
+                ("tags without counts (forms, filters)", "/tags", {"with_counts": "false"}),
                 ("note by id", f"/notes/{sample_notes[0]}", None),
             ]
             log("latency:")

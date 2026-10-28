@@ -25,7 +25,7 @@ def list_notes(
     page: Annotated[int, Query(ge=1)] = 1,
     page_size: Annotated[int, Query(ge=1, le=200)] = 20,
 ):
-    items, total = svc.list_notes(
+    items, total, capped = svc.list_notes(
         db,
         q=q,
         tag_ids=tag,
@@ -37,7 +37,7 @@ def list_notes(
         page=page,
         page_size=page_size,
     )
-    return Page(items=items, total=total, page=page, page_size=page_size)
+    return Page(items=items, total=total, total_capped=capped, page=page, page_size=page_size)
 
 
 @router.post("/notes", response_model=NoteOut, status_code=status.HTTP_201_CREATED)
@@ -80,8 +80,8 @@ def list_trash(
     page: Annotated[int, Query(ge=1)] = 1,
     page_size: Annotated[int, Query(ge=1, le=200)] = 50,
 ):
-    items, total = svc.list_notes(db, deleted=True, page=page, page_size=page_size)
-    return Page(items=items, total=total, page=page, page_size=page_size)
+    items, total, capped = svc.list_notes(db, deleted=True, page=page, page_size=page_size)
+    return Page(items=items, total=total, total_capped=capped, page=page, page_size=page_size)
 
 
 @router.delete("/trash")

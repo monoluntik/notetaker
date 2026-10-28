@@ -65,6 +65,7 @@ export function NotesPage() {
 
   const { data, isLoading, isFetching, error, refetch } = useNotesPage(apiParams)
   const pages = data ? Math.max(1, Math.ceil(data.total / PAGE_SIZE)) : 1
+  const totalText = data ? `${data.total.toLocaleString('ru')}${data.total_capped ? '+' : ''}` : ''
   const from = data && data.total ? (page - 1) * PAGE_SIZE + 1 : 0
   const to = data ? Math.min(page * PAGE_SIZE, data.total) : 0
 
@@ -151,7 +152,8 @@ export function NotesPage() {
       {(!isMobile || filtersOpen) && filterPanel}
 
       <div className="list-meta" aria-live="polite">
-        {data ? <span>{data.total ? `${from}–${to} из ${data.total}` : 'Ничего не найдено'}</span> : <span>&nbsp;</span>}
+        {data ? <span data-testid="list-range">{data.total ? `${from}–${to} из ${totalText}` : 'Ничего не найдено'}</span> : <span>&nbsp;</span>}
+        {data?.total_capped && <span className="xsmall">Уточните поиск или фильтры, чтобы увидеть точное число.</span>}
         {isFetching && !isLoading && <Spinner label="Обновление" />}
       </div>
 
@@ -191,9 +193,9 @@ export function NotesPage() {
               onChange={(e) => set({ page: e.target.value })}>
               {Array.from({ length: Math.min(pages, 500) }, (_, i) => <option key={i + 1} value={i + 1}>{i + 1}</option>)}
             </select>
-            из {pages}
+            из {pages}{data.total_capped ? '+' : ''}
           </span>
-          <button className="btn" disabled={page >= pages} onClick={() => set({ page: String(page + 1) })}>Вперёд<Icon name="right" /></button>
+          <button className="btn" disabled={page >= pages && !data.total_capped} onClick={() => set({ page: String(page + 1) })}>Вперёд<Icon name="right" /></button>
         </nav>
       )}
     </>

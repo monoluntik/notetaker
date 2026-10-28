@@ -5,7 +5,7 @@ export interface Tag {
 }
 
 export interface TagWithCount extends Tag {
-  note_count: number
+  note_count: number | null
 }
 
 export interface Note {
@@ -34,6 +34,7 @@ export interface Recurrence {
 export interface Page<T> {
   items: T[]
   total: number
+  total_capped?: boolean // true — найдено больше total (интерфейс пишет «10 000+»)
   page: number
   page_size: number
 }
@@ -89,6 +90,9 @@ export interface Upcoming {
   overdue_total: number
   today_total: number
   week_total: number
+  overdue_total_capped?: boolean
+  today_total_capped?: boolean
+  week_total_capped?: boolean
 }
 
 export interface AppNotification {

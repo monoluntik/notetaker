@@ -62,6 +62,8 @@ class Note(TimestampMixin, Base):
     __table_args__ = (
         Index("ix_notes_deleted_start", "deleted_at", "start_at"),
         Index("ix_notes_updated_at", "updated_at"),
+        Index("ix_notes_live_start", "start_at", "id", postgresql_where=text("deleted_at IS NULL")),
+        Index("ix_notes_live_updated", "updated_at", "id", postgresql_where=text("deleted_at IS NULL")),
         Index("ix_notes_series_start", "start_at",
               postgresql_where=text("recurrence_freq <> 'none' AND deleted_at IS NULL")),
         CheckConstraint("recurrence_freq IN ('none', 'daily', 'weekly', 'monthly')", name="recurrence_freq_valid"),

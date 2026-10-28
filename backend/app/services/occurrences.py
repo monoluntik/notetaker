@@ -94,7 +94,7 @@ def _filters_sql(alias: str, tag_ids: list[int] | None, with_reminders: bool) ->
     return "".join(f" AND {p}" for p in parts)
 
 
-def _window_cte(filters_n: str, filters_s: str) -> str:
+def _window_cte(filters_n: str, filters_s: str, singles_tail: str = "") -> str:
     """Вхождения (note_id, original_start) с исходным или перенесённым моментом в окне [:a, :b).
 
     Серии разворачиваются в SQL (миграция 0005): номера вхождений в окне — между
@@ -121,8 +121,9 @@ def _window_cte(filters_n: str, filters_s: str) -> str:
         AND nt_count_before(s.start_at, s.timezone, s.recurrence_freq, s.recurrence_until, ov.original_start + interval '1 microsecond')
           - nt_count_before(s.start_at, s.timezone, s.recurrence_freq, s.recurrence_until, ov.original_start) = 1
       UNION ALL
-      SELECT n.id, n.start_at FROM notes n
-      WHERE n.deleted_at IS NULL AND n.recurrence_freq = 'none' AND n.start_at >= :a AND n.start_at < :b {filters_n}
+      (SELECT n.id, n.start_at FROM notes n
+       WHERE n.deleted_at IS NULL AND n.recurrence_freq = 'none' AND n.start_at >= :a AND n.start_at < :b {filters_n}
+       {singles_tail})
     )"""
 
 
@@ -138,11 +139,17 @@ def occurrences_between(
     descending: bool = False,
 ) -> list[Occurrence]:
     """Вхождения с фактическим моментом в [start, end), отсортированные по времени."""
-    cte = _window_cte(_filters_sql("n", tag_ids, with_reminders), _filters_sql("s", tag_ids, with_reminders))
+    order = "DESC" if descending else "ASC"
+    # У обычной заметки фактический момент = start_at, поэтому порядок и лимит можно применить
+    # прямо в её ветке (по индексу), не разворачивая всё окно. Фильтр активности тоже переносится.
+    singles_tail = ""
+    if limit is not None:
+        act = "" if active is None else (" AND n.is_active" if active else " AND NOT n.is_active")
+        singles_tail = f"{act} ORDER BY n.start_at {order}, n.id {order} LIMIT :limit"
+    cte = _window_cte(_filters_sql("n", tag_ids, with_reminders), _filters_sql("s", tag_ids, with_reminders), singles_tail)
     active_sql = "" if active is None else (
         " AND (n.is_active AND coalesce(ov.is_active, true))" if active else " AND NOT (n.is_active AND coalesce(ov.is_active, true))"
     )
-    order = "DESC" if descending else "ASC"
     sql = f"""
     WITH {cte}
     SELECT o.note_id, o.original_start, coalesce(ov.start_at, o.original_start) AS start_at,
@@ -182,7 +189,8 @@ def _tags_for(db: Session, note_ids: set[int]) -> dict[int, tuple[Tag, ...]]:
     return {k: tuple(v) for k, v in out.items()}
 
 
-def count_occurrences(db: Session, start: datetime, end: datetime, *, active_only: bool = False) -> int:
+def count_occurrences(db: Session, start: datetime, end: datetime, *, active_only: bool = False,
+                      cap: int | None = None) -> int:
     """Число вхождений в [start, end) без развёртки: арифметика по сериям + поправки исключений.
 
     Для серии: nt_count_before(end) − nt_count_before(start). Каждое исключение меняет итог на
@@ -191,6 +199,14 @@ def count_occurrences(db: Session, start: datetime, end: datetime, *, active_onl
     """
     active_n = " AND n.is_active" if active_only else ""
     active_ov = " AND coalesce(ov.is_active, true)" if active_only else ""
+    params = {"a": start, "b": end}
+    if cap is not None:
+        # Сначала обычные заметки с потолком (по индексу): если их уже больше cap, итог «cap+»
+        singles = db.execute(text(f"""
+            SELECT count(*) FROM (SELECT 1 FROM notes n WHERE n.deleted_at IS NULL AND n.recurrence_freq = 'none'
+              AND n.start_at >= :a AND n.start_at < :b {active_n} LIMIT :cap1) t"""), params | {"cap1": cap + 1}).scalar()
+        if singles > cap:
+            return cap + 1
     sql = f"""
     WITH series AS (
       SELECT n.id, n.start_at, n.timezone, n.recurrence_freq, n.recurrence_until FROM notes n
@@ -219,7 +235,8 @@ def count_occurrences(db: Session, start: datetime, end: datetime, *, active_onl
     )
     SELECT (SELECT c FROM base) + (SELECT c FROM adj) + (SELECT c FROM singles)
     """
-    return int(db.execute(text(sql), {"a": start, "b": end}).scalar() or 0)
+    total = int(db.execute(text(sql), params).scalar() or 0)
+    return total if cap is None else min(total, cap + 1)
 
 
 # ---------- Операции над одним вхождением серии ----------
