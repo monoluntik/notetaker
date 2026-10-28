@@ -1,0 +1,45 @@
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: notetaker
+      POSTGRES_USER: notetaker
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-notetaker}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U notetaker -d notetaker"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  mailpit:
+    # Локальный SMTP-эмулятор: письма видны в веб-интерфейсе http://localhost:8025
+    image: axllent/mailpit:v1.24
+    ports:
+      - "8025:8025"
+
+  backend:
+    build: ./backend
+    environment:
+      NOTETAKER_DATABASE_URL: postgresql+psycopg://notetaker:${POSTGRES_PASSWORD:-notetaker}@db:5432/notetaker
+      NOTETAKER_EMAIL_BACKEND: smtp
+      NOTETAKER_SMTP_HOST: mailpit
+      NOTETAKER_SMTP_PORT: 1025
+      NOTETAKER_CORS_ORIGINS: '["http://localhost:8080"]'
+    depends_on:
+      db:
+        condition: service_healthy
+      mailpit:
+        condition: service_started
+    restart: unless-stopped
+
+  frontend:
+    build: ./frontend
+    ports:
+      - "8080:80"
+    depends_on:
+      - backend
+
+volumes:
+  pgdata:
