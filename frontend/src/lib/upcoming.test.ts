@@ -4,7 +4,7 @@ import { isStale, recategorize } from './upcoming'
 
 const occ = (title: string, start_at: string, is_active = true): Occurrence => ({
   note_id: 1, original_start: start_at, start_at, title, body: '', is_active, timezone: 'UTC',
-  tags: [], is_recurring: false, is_exception: false,
+  tags: [], is_recurring: false, is_exception: false, note_version: 1,
 })
 
 const data: Upcoming = {
@@ -16,6 +16,8 @@ const data: Upcoming = {
   week: [occ('friday', '2026-11-06T10:00:00Z')],
   overdue: [occ('yesterday', '2026-11-03T10:00:00Z')],
   overdue_total: 120, // сервер вернул 1 из 120
+  today_total: 2,
+  week_total: 1,
 }
 
 const names = (s: Occurrence[]) => s.map((o) => o.title)

@@ -4,7 +4,7 @@ import { groupByLocalDate, moveTo, shiftAnchor, viewRange } from './calendar'
 
 const occ = (start_at: string): Occurrence => ({
   note_id: 1, original_start: start_at, start_at, title: 't', body: '', is_active: true, timezone: 'UTC',
-  tags: [], is_recurring: false, is_exception: false,
+  tags: [], is_recurring: false, is_exception: false, note_version: 1,
 })
 
 describe('calendar', () => {

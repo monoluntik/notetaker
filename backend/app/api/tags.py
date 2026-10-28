@@ -9,8 +9,9 @@ router = APIRouter(prefix="/tags", tags=["tags"])
 
 
 @router.get("", response_model=list[TagWithCount])
-def list_tags(db: Session = Depends(get_db)):
-    return [TagWithCount(id=t.id, name=t.name, color=t.color, note_count=n) for t, n in svc.list_tags(db)]
+def list_tags(with_counts: bool = True, db: Session = Depends(get_db)):
+    """Теги; with_counts=false — без подсчёта заметок (быстро, для форм и фильтров)."""
+    return [TagWithCount(id=t.id, name=t.name, color=t.color, note_count=n) for t, n in svc.list_tags(db, with_counts)]
 
 
 @router.post("", response_model=TagOut, status_code=status.HTTP_201_CREATED)

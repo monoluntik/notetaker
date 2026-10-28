@@ -25,7 +25,7 @@ def list_notes(
     page: Annotated[int, Query(ge=1)] = 1,
     page_size: Annotated[int, Query(ge=1, le=200)] = 20,
 ):
-    items, total = svc.list_notes(
+    items, total, capped = svc.list_notes(
         db,
         q=q,
         tag_ids=tag,
@@ -37,7 +37,7 @@ def list_notes(
         page=page,
         page_size=page_size,
     )
-    return Page(items=items, total=total, page=page, page_size=page_size)
+    return Page(items=items, total=total, total_capped=capped, page=page, page_size=page_size)
 
 
 @router.post("/notes", response_model=NoteOut, status_code=status.HTTP_201_CREATED)
@@ -55,20 +55,23 @@ def update_note(note_id: int, data: NoteUpdate, db: Session = Depends(get_db)):
     return svc.update_note(db, note_id, data)
 
 
+Version = Annotated[int, Query(description="Версия заметки, известная клиенту; устаревшая → 409")]
+
+
 @router.delete("/notes/{note_id}", response_model=NoteOut)
-def trash_note(note_id: int, db: Session = Depends(get_db)):
+def trash_note(note_id: int, version: Version, db: Session = Depends(get_db)):
     """Перемещает заметку (или всю серию) в корзину."""
-    return svc.trash_note(db, note_id)
+    return svc.trash_note(db, note_id, version)
 
 
 @router.post("/notes/{note_id}/restore", response_model=NoteOut)
-def restore_note(note_id: int, db: Session = Depends(get_db)):
-    return svc.restore_note(db, note_id)
+def restore_note(note_id: int, version: Version, db: Session = Depends(get_db)):
+    return svc.restore_note(db, note_id, version)
 
 
 @router.delete("/notes/{note_id}/purge", status_code=status.HTTP_204_NO_CONTENT)
-def purge_note(note_id: int, db: Session = Depends(get_db)):
-    svc.purge_note(db, note_id)
+def purge_note(note_id: int, version: Version, db: Session = Depends(get_db)):
+    svc.purge_note(db, note_id, version)
 
 
 @router.get("/trash", response_model=Page[NoteOut])
@@ -77,8 +80,8 @@ def list_trash(
     page: Annotated[int, Query(ge=1)] = 1,
     page_size: Annotated[int, Query(ge=1, le=200)] = 50,
 ):
-    items, total = svc.list_notes(db, deleted=True, page=page, page_size=page_size)
-    return Page(items=items, total=total, page=page, page_size=page_size)
+    items, total, capped = svc.list_notes(db, deleted=True, page=page, page_size=page_size)
+    return Page(items=items, total=total, total_capped=capped, page=page, page_size=page_size)
 
 
 @router.delete("/trash")

@@ -1,6 +1,7 @@
 """Тесты работают на реальном PostgreSQL (БД notetaker_test), схема — через миграции Alembic."""
 
 import os
+import re
 
 import pytest
 from alembic import command
@@ -58,7 +59,44 @@ def app(settings):
     return create_app(settings)
 
 
+NOTE_MUTATION = re.compile(r"^/api/notes/(\d+)(/restore|/purge|/occurrences/[^/]+(/override|/split)?)?$")
+
+
+class SingleClient(TestClient):
+    """Клиент «одной вкладки»: если тест не передал version, подставляет актуальную.
+
+    Версия обязательна во всех изменениях заметок (D14). Большинство тестов проверяют не
+    конкуренцию, а бизнес-логику, поэтому ведут себя как единственный клиент, который
+    перед изменением знает текущую версию. Тесты конкуренции передают версию явно
+    (или используют `raw_client`, где ничего не подставляется).
+    """
+
+    def request(self, method, url, *args, **kwargs):
+        path = str(url).split("?")[0]
+        m = NOTE_MUTATION.match(path)
+        if m and method.upper() in ("PATCH", "DELETE", "POST"):
+            params = dict(kwargs.get("params") or {})
+            body = kwargs.get("json")
+            has_version = "version" in params or "version=" in str(url) or (
+                isinstance(body, dict) and "version" in body)
+            if not has_version:
+                current = super().request("GET", f"/api/notes/{m.group(1)}")
+                if current.status_code == 200:
+                    v = current.json()["version"]
+                    if method.upper() == "PATCH" or path.endswith("/split"):
+                        kwargs["json"] = {**(body or {}), "version": v}
+                    else:
+                        kwargs["params"] = {**params, "version": v}
+        return super().request(method, url, *args, **kwargs)
+
+
 @pytest.fixture()
 def client(app):
+    with SingleClient(app) as c:
+        yield c
+
+
+@pytest.fixture()
+def raw_client(app):
     with TestClient(app) as c:
         yield c

@@ -12,11 +12,13 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.models import Note
-from app.services.occurrences import Occurrence, occurrences_between
+from app.services.occurrences import Occurrence, count_occurrences, occurrences_between
 from app.services.settings import get_settings_row
 from app.timeutil import get_zone
 
 DEFAULT_OVERDUE_LIMIT = 50
+SECTION_LIMIT = 200
+TOTAL_CAP = 10_000  # итоги разделов точны до этого числа; больше — «10 000+» (флаг *_capped)  # «сегодня» и «неделя»: больше в одном разделе не показываем, итог — всегда точный
 
 
 @dataclass
@@ -29,6 +31,11 @@ class Upcoming:
     week: list[Occurrence]
     overdue: list[Occurrence]
     overdue_total: int
+    today_total: int
+    week_total: int
+    overdue_total_capped: bool = False
+    today_total_capped: bool = False
+    week_total_capped: bool = False
 
 
 def local_bounds(now: datetime, tz_name: str) -> tuple[datetime, datetime, datetime]:
@@ -42,22 +49,37 @@ def local_bounds(now: datetime, tz_name: str) -> tuple[datetime, datetime, datet
     return day_start, day_end, week_end
 
 
+def _latest_overdue(db: Session, now: datetime, earliest: datetime, limit: int) -> list[Occurrence]:
+    """Последние `limit` прошедших активных вхождений. Окно назад расширяется в 4 раза,
+    пока не наберётся нужное число, — без развёртки всей истории."""
+    span = timedelta(days=7)
+    while True:
+        a = max(now - span, earliest)
+        found = occurrences_between(db, a, now, active=True, limit=limit, descending=True)
+        if len(found) >= limit or a <= earliest:
+            return found
+        span *= 4
+
+
 def get_upcoming(db: Session, now: datetime, overdue_limit: int = DEFAULT_OVERDUE_LIMIT) -> Upcoming:
+    """Работа ограничена размером окна и лимитами, а не числом заметок (docs/LOADTEST.md)."""
     tz_name = get_settings_row(db).timezone
     _, day_end, week_end = local_bounds(now, tz_name)
-    # Самое раннее начало среди активных заметок: раньше прошедших активных вхождений нет
-    # (перенос вхождения допускается только в пределах серии).
     earliest = db.scalar(select(func.min(Note.start_at)).where(Note.deleted_at.is_(None), Note.is_active.is_(True)))
-    window_start = min(earliest, now) if earliest else now
-    occs = occurrences_between(db, window_start, week_end)
-    overdue = sorted((o for o in occs if o.start_at < now and o.is_active), key=lambda o: o.start_at, reverse=True)
+    earliest = min(earliest, now) if earliest else now
     return Upcoming(
         now=now,
         timezone=tz_name,
         day_end=day_end,
         week_end=week_end,
-        today=[o for o in occs if now <= o.start_at < day_end],
-        week=[o for o in occs if day_end <= o.start_at < week_end],
-        overdue=overdue[:overdue_limit],
-        overdue_total=len(overdue),
+        today=occurrences_between(db, now, day_end, limit=SECTION_LIMIT),
+        week=occurrences_between(db, day_end, week_end, limit=SECTION_LIMIT),
+        overdue=_latest_overdue(db, now, earliest, overdue_limit),
+        **_total("overdue", count_occurrences(db, earliest, now, active_only=True, cap=TOTAL_CAP)),
+        **_total("today", count_occurrences(db, now, day_end, cap=TOTAL_CAP)),
+        **_total("week", count_occurrences(db, day_end, week_end, cap=TOTAL_CAP)),
     )
+
+
+def _total(name: str, n: int) -> dict:
+    return {f"{name}_total": min(n, TOTAL_CAP), f"{name}_total_capped": n > TOTAL_CAP}

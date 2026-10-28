@@ -8,11 +8,11 @@
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
-from sqlalchemy import and_, or_, select
+from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
 from app.errors import Conflict, NotFound
-from app.models import Note, OccurrenceOverride, Tag
+from app.models import Note, OccurrenceOverride, Tag, note_tags
 from app.schemas import OccurrenceUpdate
 from app.services.recurrence import is_occurrence, iter_occurrence_starts, local_date
 from app.timeutil import ensure_aware, get_zone
@@ -30,6 +30,7 @@ class Occurrence:
     tags: tuple[Tag, ...]
     is_recurring: bool = False
     is_exception: bool = False
+    note_version: int = 1
 
 
 def build_occurrence(note: Note, original_start: datetime, ov: OccurrenceOverride | None) -> Occurrence:
@@ -45,6 +46,7 @@ def build_occurrence(note: Note, original_start: datetime, ov: OccurrenceOverrid
         tags=tuple(note.tags),
         is_recurring=note.is_recurring,
         is_exception=ov is not None,
+        note_version=note.version,
     )
 
 
@@ -83,6 +85,48 @@ def note_occurrences(note: Note, start: datetime, end: datetime) -> list[Occurre
     return result
 
 
+def _filters_sql(alias: str, tag_ids: list[int] | None, with_reminders: bool) -> str:
+    parts = []
+    if tag_ids:
+        parts.append(f"EXISTS (SELECT 1 FROM note_tags nt WHERE nt.note_id = {alias}.id AND nt.tag_id = ANY(:tag_ids))")
+    if with_reminders:
+        parts.append(f"EXISTS (SELECT 1 FROM note_reminders nr WHERE nr.note_id = {alias}.id)")
+    return "".join(f" AND {p}" for p in parts)
+
+
+def _window_cte(filters_n: str, filters_s: str, singles_tail: str = "") -> str:
+    """Вхождения (note_id, original_start) с исходным или перенесённым моментом в окне [:a, :b).
+
+    Серии разворачиваются в SQL (миграция 0005): номера вхождений в окне — между
+    nt_count_before(:a) и nt_count_before(:b) − 1, поэтому работа пропорциональна размеру окна,
+    а не длине истории. Обычные заметки идут по индексу (deleted_at, start_at).
+    """
+    return f"""
+    series AS (
+      SELECT s.id, s.start_at, s.timezone, s.recurrence_freq, s.recurrence_until FROM notes s
+      WHERE s.deleted_at IS NULL AND s.recurrence_freq <> 'none' AND s.start_at < :b
+        AND s.recurrence_until >= (:a AT TIME ZONE 'UTC')::date - 1 {filters_s}
+    ),
+    occ AS (
+      SELECT s.id AS note_id, nt_occurrence(s.start_at, s.timezone, s.recurrence_freq, k) AS original_start
+      FROM series s,
+           LATERAL generate_series(nt_count_before(s.start_at, s.timezone, s.recurrence_freq, s.recurrence_until, :a),
+                                   nt_count_before(s.start_at, s.timezone, s.recurrence_freq, s.recurrence_until, :b) - 1) k
+      UNION ALL
+      -- перенесённые в окно вхождения, исходный момент которых вне окна
+      SELECT ov.note_id, ov.original_start FROM occurrence_overrides ov JOIN notes s ON s.id = ov.note_id
+      WHERE NOT ov.is_cancelled AND ov.start_at >= :a AND ov.start_at < :b
+        AND NOT (ov.original_start >= :a AND ov.original_start < :b)
+        AND s.deleted_at IS NULL AND s.recurrence_freq <> 'none' {filters_s}
+        AND nt_count_before(s.start_at, s.timezone, s.recurrence_freq, s.recurrence_until, ov.original_start + interval '1 microsecond')
+          - nt_count_before(s.start_at, s.timezone, s.recurrence_freq, s.recurrence_until, ov.original_start) = 1
+      UNION ALL
+      (SELECT n.id, n.start_at FROM notes n
+       WHERE n.deleted_at IS NULL AND n.recurrence_freq = 'none' AND n.start_at >= :a AND n.start_at < :b {filters_n}
+       {singles_tail})
+    )"""
+
+
 def occurrences_between(
     db: Session,
     start: datetime,
@@ -90,32 +134,109 @@ def occurrences_between(
     *,
     tag_ids: list[int] | None = None,
     active: bool | None = None,
+    with_reminders: bool = False,
+    limit: int | None = None,
+    descending: bool = False,
 ) -> list[Occurrence]:
-    moved_in = select(OccurrenceOverride.note_id).where(
-        OccurrenceOverride.start_at >= start, OccurrenceOverride.start_at < end
+    """Вхождения с фактическим моментом в [start, end), отсортированные по времени."""
+    order = "DESC" if descending else "ASC"
+    # У обычной заметки фактический момент = start_at, поэтому порядок и лимит можно применить
+    # прямо в её ветке (по индексу), не разворачивая всё окно. Фильтр активности тоже переносится.
+    singles_tail = ""
+    if limit is not None:
+        act = "" if active is None else (" AND n.is_active" if active else " AND NOT n.is_active")
+        singles_tail = f"{act} ORDER BY n.start_at {order}, n.id {order} LIMIT :limit"
+    cte = _window_cte(_filters_sql("n", tag_ids, with_reminders), _filters_sql("s", tag_ids, with_reminders), singles_tail)
+    active_sql = "" if active is None else (
+        " AND (n.is_active AND coalesce(ov.is_active, true))" if active else " AND NOT (n.is_active AND coalesce(ov.is_active, true))"
     )
-    stmt = select(Note).where(
-        Note.deleted_at.is_(None),
-        or_(
-            and_(Note.recurrence_freq == "none", Note.start_at >= start, Note.start_at < end),
-            and_(
-                Note.recurrence_freq != "none",
-                Note.start_at < end,
-                # until — локальная дата; запас в сутки покрывает любые часовые пояса
-                Note.recurrence_until >= (start - timedelta(days=1)).date(),
-            ),
-            Note.id.in_(moved_in),
-        ),
+    sql = f"""
+    WITH {cte}
+    SELECT o.note_id, o.original_start, coalesce(ov.start_at, o.original_start) AS start_at,
+           coalesce(ov.title, n.title) AS title, coalesce(ov.body, n.body) AS body,
+           n.is_active AND coalesce(ov.is_active, true) AS is_active, n.timezone,
+           n.recurrence_freq <> 'none' AS is_recurring, ov.id IS NOT NULL AS is_exception, n.version
+    FROM occ o JOIN notes n ON n.id = o.note_id
+    LEFT JOIN occurrence_overrides ov ON ov.note_id = o.note_id AND ov.original_start = o.original_start
+    WHERE (ov.id IS NULL OR NOT ov.is_cancelled)
+      AND coalesce(ov.start_at, o.original_start) >= :a AND coalesce(ov.start_at, o.original_start) < :b
+      {active_sql}
+    ORDER BY 3 {order}, 1 {order}
+    {"LIMIT :limit" if limit is not None else ""}
+    """
+    params = {"a": start, "b": end, "tag_ids": tag_ids or [], "limit": limit}
+    rows = db.execute(text(sql), params).all()
+    tags = _tags_for(db, {r.note_id for r in rows})
+    return [
+        Occurrence(
+            note_id=r.note_id, original_start=r.original_start, start_at=r.start_at, title=r.title, body=r.body,
+            is_active=r.is_active, timezone=r.timezone, tags=tags.get(r.note_id, ()), is_recurring=r.is_recurring,
+            is_exception=r.is_exception, note_version=r.version,
+        )
+        for r in rows
+    ]
+
+
+def _tags_for(db: Session, note_ids: set[int]) -> dict[int, tuple[Tag, ...]]:
+    if not note_ids:
+        return {}
+    out: dict[int, list[Tag]] = {}
+    for note_id, tag in db.execute(
+        select(note_tags.c.note_id, Tag).join(Tag, Tag.id == note_tags.c.tag_id)
+        .where(note_tags.c.note_id.in_(note_ids)).order_by(Tag.name)
+    ):
+        out.setdefault(note_id, []).append(tag)
+    return {k: tuple(v) for k, v in out.items()}
+
+
+def count_occurrences(db: Session, start: datetime, end: datetime, *, active_only: bool = False,
+                      cap: int | None = None) -> int:
+    """Число вхождений в [start, end) без развёртки: арифметика по сериям + поправки исключений.
+
+    Для серии: nt_count_before(end) − nt_count_before(start). Каждое исключение меняет итог на
+    «учитывается после» − «учитывалось до»: до — исходный момент в окне; после — не отменено,
+    фактический момент в окне и (для active_only) вхождение активно.
+    """
+    active_n = " AND n.is_active" if active_only else ""
+    active_ov = " AND coalesce(ov.is_active, true)" if active_only else ""
+    params = {"a": start, "b": end}
+    if cap is not None:
+        # Сначала обычные заметки с потолком (по индексу): если их уже больше cap, итог «cap+»
+        singles = db.execute(text(f"""
+            SELECT count(*) FROM (SELECT 1 FROM notes n WHERE n.deleted_at IS NULL AND n.recurrence_freq = 'none'
+              AND n.start_at >= :a AND n.start_at < :b {active_n} LIMIT :cap1) t"""), params | {"cap1": cap + 1}).scalar()
+        if singles > cap:
+            return cap + 1
+    sql = f"""
+    WITH series AS (
+      SELECT n.id, n.start_at, n.timezone, n.recurrence_freq, n.recurrence_until FROM notes n
+      WHERE n.deleted_at IS NULL AND n.recurrence_freq <> 'none' AND n.start_at < :b
+        AND n.recurrence_until >= (:a AT TIME ZONE 'UTC')::date - 1 {active_n}
+    ),
+    base AS (
+      SELECT coalesce(sum(nt_count_before(start_at, timezone, recurrence_freq, recurrence_until, :b)
+                        - nt_count_before(start_at, timezone, recurrence_freq, recurrence_until, :a)), 0) AS c
+      FROM series
+    ),
+    adj AS (
+      SELECT coalesce(sum(
+               (NOT ov.is_cancelled AND coalesce(ov.start_at, ov.original_start) >= :a
+                AND coalesce(ov.start_at, ov.original_start) < :b {active_ov})::int
+             - (ov.original_start >= :a AND ov.original_start < :b)::int), 0) AS c
+      FROM occurrence_overrides ov JOIN notes n ON n.id = ov.note_id
+      WHERE n.deleted_at IS NULL AND n.recurrence_freq <> 'none' {active_n}
+        AND ((ov.original_start >= :a AND ov.original_start < :b) OR (ov.start_at >= :a AND ov.start_at < :b))
+        AND nt_count_before(n.start_at, n.timezone, n.recurrence_freq, n.recurrence_until, ov.original_start + interval '1 microsecond')
+          - nt_count_before(n.start_at, n.timezone, n.recurrence_freq, n.recurrence_until, ov.original_start) = 1
+    ),
+    singles AS (
+      SELECT count(*) AS c FROM notes n
+      WHERE n.deleted_at IS NULL AND n.recurrence_freq = 'none' AND n.start_at >= :a AND n.start_at < :b {active_n}
     )
-    if tag_ids:
-        stmt = stmt.where(Note.tags.any(Tag.id.in_(tag_ids)))
-    result: list[Occurrence] = []
-    for note in db.scalars(stmt):
-        result.extend(note_occurrences(note, start, end))
-    if active is not None:
-        result = [o for o in result if o.is_active is active]
-    result.sort(key=lambda o: (o.start_at, o.note_id))
-    return result
+    SELECT (SELECT c FROM base) + (SELECT c FROM adj) + (SELECT c FROM singles)
+    """
+    total = int(db.execute(text(sql), params).scalar() or 0)
+    return total if cap is None else min(total, cap + 1)
 
 
 # ---------- Операции над одним вхождением серии ----------
@@ -208,9 +329,9 @@ def update_occurrence(db: Session, note_id: int, original_start: datetime, data:
     return build_occurrence(note, orig, _find_override(note, orig))
 
 
-def cancel_occurrence(db: Session, note_id: int, original_start: datetime) -> None:
+def cancel_occurrence(db: Session, note_id: int, original_start: datetime, version: int) -> None:
     """Удаляет только одно вхождение серии."""
-    note, orig = _resolve(db, note_id, original_start)
+    note, orig = _resolve(db, note_id, original_start, version)
     ov = _find_override(note, orig)
     if ov is None:
         note.overrides.append(OccurrenceOverride(note_id=note.id, original_start=orig, is_cancelled=True))
@@ -220,9 +341,9 @@ def cancel_occurrence(db: Session, note_id: int, original_start: datetime) -> No
     db.commit()
 
 
-def reset_occurrence(db: Session, note_id: int, original_start: datetime) -> Occurrence:
+def reset_occurrence(db: Session, note_id: int, original_start: datetime, version: int) -> Occurrence:
     """Убирает исключение: вхождение снова как в серии (в т.ч. возвращает удалённое)."""
-    note, orig = _resolve(db, note_id, original_start)
+    note, orig = _resolve(db, note_id, original_start, version)
     ov = _find_override(note, orig)
     if ov is not None:
         note.overrides.remove(ov)
