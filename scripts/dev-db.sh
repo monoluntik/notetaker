@@ -19,12 +19,12 @@ case "${1:-start}" in
       "$BIN/pg_ctl" -D "$DATA" -l "$DATA/server.log" -w \
         -o "-h 127.0.0.1 -p $PORT -k $DATA" start
     fi
-    for db in notetaker notetaker_test; do
+    for db in notetaker notetaker_test notetaker_e2e; do
       "$BIN/psql" -h 127.0.0.1 -p "$PORT" -U postgres -tAc \
         "select 1 from pg_database where datname='$db'" | grep -q 1 \
         || "$BIN/createdb" -h 127.0.0.1 -p "$PORT" -U postgres "$db"
     done
-    echo "PostgreSQL on 127.0.0.1:$PORT (dbs: notetaker, notetaker_test)";;
+    echo "PostgreSQL on 127.0.0.1:$PORT (dbs: notetaker, notetaker_test, notetaker_e2e)";;
   stop)   "$BIN/pg_ctl" -D "$DATA" -m fast stop;;
   status) "$BIN/pg_ctl" -D "$DATA" status;;
   psql)   shift; "$BIN/psql" -h 127.0.0.1 -p "$PORT" -U postgres -d "${PGDATABASE:-notetaker}" "$@";;

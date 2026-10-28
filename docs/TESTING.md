@@ -11,6 +11,7 @@ scripts/dev-db.sh start                       # PostgreSQL на 127.0.0.1:5433
 cd backend && ../.venv/bin/pytest -q          # backend
 cd frontend && npm test                       # vitest
 cd frontend && npm run build                  # проверка типов + сборка
+cd frontend && npm run e2e                    # Playwright: сам поднимает backend :8011 (БД notetaker_e2e) и Vite :5174
 ```
 
 ## План тестирования
@@ -28,7 +29,7 @@ cd frontend && npm run build                  # проверка типов + с
 | «Предстоящие» | API | категории при фиксированном `now` и разных TZ |
 | Напоминания | API | отправка 1 раз; повторный скан; два параллельных сканера; «рестарт»; неактивная/удалённая — нет; смена TZ не меняет fire_at; пропущенные (D7) |
 | WebSocket | API | два клиента получают одно событие с одним `delivery_id` |
-| E2E | Playwright | создание заметки, календарь, две вкладки (если Playwright доступен) |
+| E2E | Playwright | создание заметки, поиск, календарь, DnD, две вкладки, уведомление (`npm run e2e`) |
 
 ## Фактические результаты
 Заполняется после каждого прогона: дата/время, команда, итог.
@@ -47,3 +48,5 @@ cd frontend && npm run build                  # проверка типов + с
 | 2026-10-28 12:48 | Э3 | `npm test` / `npm run build` | 7 passed / OK |
 | 2026-10-28 12:51 | Э5 | `pytest -q` | 54 passed (11 unit повторений + 14 API серий/исключений) |
 | 2026-10-28 12:53 | Э5 | `npm run build` / `npm test` / `eslint` | OK / 7 passed / 0 проблем |
+| 2026-10-28 13:10 | Э4 | `npm run e2e` (Playwright 1.64.1, Chromium) | 2 passed: создание тега/заметки через UI → поиск → календарь → DnD (дата меняется, время 15:30 Алматы сохраняется, в БД `10:30Z`); DnD вхождения серии переносит только его; перенос на день с другим вхождением → сообщение об ошибке 409 |
+| 2026-10-28 13:11 | Э4 | `pytest -q` / `npm test` | 54 passed / 13 passed |

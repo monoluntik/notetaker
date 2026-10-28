@@ -3,6 +3,7 @@ import { NavLink, Route, Routes } from 'react-router-dom'
 import { api } from './api/client'
 import { useUserTz } from './api/hooks'
 import { NoteEditorProvider } from './components/NoteEditor'
+import { CalendarPage } from './pages/CalendarPage'
 import { NotesPage } from './pages/NotesPage'
 import { SettingsPage } from './pages/SettingsPage'
 import { TagsPage } from './pages/TagsPage'
@@ -40,6 +41,7 @@ export default function App() {
         <main>
           <Routes>
             <Route path="/notes" element={<NotesPage />} />
+            <Route path="/calendar" element={<CalendarPage />} />
             <Route path="/tags" element={<TagsPage />} />
             <Route path="/trash" element={<TrashPage />} />
             <Route path="/settings" element={<SettingsPage />} />
