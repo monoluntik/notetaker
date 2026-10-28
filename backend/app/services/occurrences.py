@@ -120,10 +120,11 @@ def occurrences_between(
 
 # ---------- Операции над одним вхождением серии ----------
 
-def _get_series(db: Session, note_id: int) -> Note:
-    note = db.get(Note, note_id)
-    if note is None:
-        raise NotFound(f"Заметка {note_id} не найдена")
+def _get_series(db: Session, note_id: int, expected_version: int | None = None) -> Note:
+    from app.services.notes import check_version, lock_note  # избегаем циклического импорта
+
+    note = lock_note(db, note_id)
+    check_version(note, expected_version)
     if note.deleted_at is not None:
         raise Conflict("Заметка в корзине: сначала восстановите её")
     if not note.is_recurring:
@@ -135,12 +136,25 @@ def _find_override(note: Note, original_start: datetime) -> OccurrenceOverride |
     return next((ov for ov in note.overrides if ov.original_start == original_start), None)
 
 
-def _resolve(db: Session, note_id: int, original_start: datetime) -> tuple[Note, datetime]:
-    note = _get_series(db, note_id)
+def _resolve(db: Session, note_id: int, original_start: datetime,
+             expected_version: int | None = None) -> tuple[Note, datetime]:
+    note = _get_series(db, note_id, expected_version)
     original_start = ensure_aware(original_start, "original_start")
     if not _is_valid_original(note, original_start):
         raise NotFound("Такого вхождения в серии нет")
     return note, original_start
+
+
+def current_occurrence(note: Note, original_start: datetime) -> Occurrence | None:
+    """Вхождение в текущем состоянии заметки или None, если его больше нет (удалено/правило изменилось)."""
+    if not note.is_recurring:
+        return build_occurrence(note, note.start_at, None)  # у обычной заметки вхождение одно
+    if not _is_valid_original(note, original_start):
+        return None
+    ov = _find_override(note, original_start)
+    if ov and ov.is_cancelled:
+        return None
+    return build_occurrence(note, original_start, ov)
 
 
 def get_occurrence(db: Session, note_id: int, original_start: datetime) -> Occurrence:
@@ -170,7 +184,7 @@ def _check_move(note: Note, original_start: datetime, new_start: datetime) -> No
 
 
 def update_occurrence(db: Session, note_id: int, original_start: datetime, data: OccurrenceUpdate) -> Occurrence:
-    note, orig = _resolve(db, note_id, original_start)
+    note, orig = _resolve(db, note_id, original_start, data.version)
     ov = _find_override(note, orig)
     if ov is not None and ov.is_cancelled:
         raise NotFound("Вхождение удалено")
@@ -188,6 +202,7 @@ def update_occurrence(db: Session, note_id: int, original_start: datetime, data:
         new_start = ensure_aware(data.start_at, "start_at")
         _check_move(note, orig, new_start)
         ov.start_at = None if new_start == orig else new_start
+    note.version += 1
     db.commit()
     db.refresh(note)
     return build_occurrence(note, orig, _find_override(note, orig))
@@ -201,6 +216,7 @@ def cancel_occurrence(db: Session, note_id: int, original_start: datetime) -> No
         note.overrides.append(OccurrenceOverride(note_id=note.id, original_start=orig, is_cancelled=True))
     else:
         ov.is_cancelled = True
+    note.version += 1
     db.commit()
 
 
@@ -210,6 +226,7 @@ def reset_occurrence(db: Session, note_id: int, original_start: datetime) -> Occ
     ov = _find_override(note, orig)
     if ov is not None:
         note.overrides.remove(ov)
+        note.version += 1
         db.commit()
         db.refresh(note)
     return build_occurrence(note, orig, None)

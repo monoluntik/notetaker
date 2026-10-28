@@ -1,7 +1,7 @@
 def test_settings_roundtrip(client):
-    assert client.get("/api/settings").json() == {"email": None, "timezone": "UTC"}
+    assert client.get("/api/settings").json() == {"email": None, "timezone": "UTC", "trash_retention_days": 30}
     r = client.patch("/api/settings", json={"email": "me@example.com", "timezone": "Asia/Almaty"})
-    assert r.json() == {"email": "me@example.com", "timezone": "Asia/Almaty"}
+    assert r.json() == {"email": "me@example.com", "timezone": "Asia/Almaty", "trash_retention_days": 30}
     # Частичное обновление не трогает другие поля
     assert client.patch("/api/settings", json={"timezone": "UTC"}).json()["email"] == "me@example.com"
     # Пустой email очищает его

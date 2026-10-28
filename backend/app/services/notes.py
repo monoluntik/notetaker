@@ -4,7 +4,7 @@ from sqlalchemy import Date, DateTime, Select, and_, cast, delete, func, literal
 from sqlalchemy.orm import Session
 
 from app.errors import Conflict, Invalid, NotFound
-from app.models import Note, NoteReminder, Tag, note_tags
+from app.models import Note, NoteReminder, OccurrenceOverride, Tag, note_tags
 from app.schemas import NoteCreate, NoteUpdate, Recurrence, SortField, SortOrder
 from app.services.recurrence import local_date
 from app.services.settings import get_settings_row
@@ -40,10 +40,30 @@ def get_note(db: Session, note_id: int, *, include_deleted: bool = True) -> Note
     return note
 
 
-def _get_editable(db: Session, note_id: int) -> Note:
-    note = get_note(db, note_id)
+EDIT_CONFLICT = (
+    "Заметку уже изменили в другой вкладке или на другом устройстве. "
+    "Загрузите актуальную версию и повторите изменения."
+)
+
+
+def lock_note(db: Session, note_id: int) -> Note:
+    """Заметка с блокировкой строки до конца транзакции: правки одной заметки идут по очереди."""
+    note = db.get(Note, note_id, with_for_update=True, populate_existing=True)
+    if note is None:
+        raise NotFound(f"Заметка {note_id} не найдена")
+    return note
+
+
+def check_version(note: Note, expected: int | None) -> None:
+    if expected is not None and expected != note.version:
+        raise Conflict(EDIT_CONFLICT)
+
+
+def _get_editable(db: Session, note_id: int, expected_version: int | None = None) -> Note:
+    note = lock_note(db, note_id)
     if note.deleted_at is not None:
         raise Conflict("Заметка в корзине: сначала восстановите её")
+    check_version(note, expected_version)
     return note
 
 
@@ -68,7 +88,7 @@ def create_note(db: Session, data: NoteCreate) -> Note:
 
 
 def update_note(db: Session, note_id: int, data: NoteUpdate) -> Note:
-    note = _get_editable(db, note_id)
+    note = _get_editable(db, note_id, data.version)
     fields = data.model_fields_set
     old_rule = (note.start_at, note.timezone, note.recurrence_freq)
     if "title" in fields and data.title is not None:
@@ -98,23 +118,26 @@ def update_note(db: Session, note_id: int, data: NoteUpdate) -> Note:
     if (note.start_at, note.timezone, note.recurrence_freq) != old_rule:
         note.overrides.clear()
     note.updated_at = func.now()  # теги меняют только связь, поэтому время обновляем явно
+    note.version += 1
     db.commit()
     db.refresh(note)
     return note
 
 
 def trash_note(db: Session, note_id: int) -> Note:
-    note = get_note(db, note_id)
+    note = lock_note(db, note_id)
     if note.deleted_at is None:
         note.deleted_at = utcnow()
+        note.version += 1
         db.commit()
     return note
 
 
 def restore_note(db: Session, note_id: int) -> Note:
-    note = get_note(db, note_id)
+    note = lock_note(db, note_id)
     if note.deleted_at is not None:
         note.deleted_at = None
+        note.version += 1
         db.commit()
     return note
 
@@ -125,6 +148,13 @@ def purge_note(db: Session, note_id: int) -> None:
         raise Conflict("Окончательно удалить можно только заметку из корзины")
     db.delete(note)
     db.commit()
+
+
+def purge_expired_trash(db: Session, now: datetime, retention_days: int) -> int:
+    """Окончательно удаляет заметки, лежащие в корзине дольше retention_days."""
+    result = db.execute(delete(Note).where(Note.deleted_at < now - timedelta(days=retention_days)))
+    db.commit()
+    return result.rowcount or 0
 
 
 def empty_trash(db: Session) -> int:
@@ -149,7 +179,21 @@ def build_list_query(
     stmt = select(Note).where(Note.deleted_at.is_not(None) if deleted else Note.deleted_at.is_(None))
     if q and q.strip():
         pattern = f"%{_escape_like(q.strip())}%"
-        stmt = stmt.where(or_(Note.title.ilike(pattern, escape="\\"), Note.body.ilike(pattern, escape="\\")))
+        # Серия находится и по изменённому заголовку/тексту отдельного (не удалённого) вхождения
+        in_occurrence = select(OccurrenceOverride.note_id).where(
+            OccurrenceOverride.is_cancelled.is_(False),
+            or_(
+                OccurrenceOverride.title.ilike(pattern, escape="\\"),
+                OccurrenceOverride.body.ilike(pattern, escape="\\"),
+            ),
+        )
+        stmt = stmt.where(
+            or_(
+                Note.title.ilike(pattern, escape="\\"),
+                Note.body.ilike(pattern, escape="\\"),
+                Note.id.in_(in_occurrence),
+            )
+        )
     if tag_ids:
         # «любой из выбранных тегов»
         stmt = stmt.where(Note.id.in_(select(note_tags.c.note_id).where(note_tags.c.tag_id.in_(tag_ids))))

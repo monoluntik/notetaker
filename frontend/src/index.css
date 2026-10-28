@@ -87,3 +87,4 @@ button.chip { padding: .15rem .6rem; }
 .toasts { position: fixed; right: 1rem; bottom: 1rem; display: flex; flex-direction: column; gap: .5rem; z-index: 20; align-items: flex-end; max-width: min(360px, calc(100vw - 2rem)); }
 .toast { background: #fff; border: 1px solid var(--border); border-left: 4px solid #f59e0b; border-radius: 8px; padding: .6rem .8rem; box-shadow: 0 6px 20px rgba(0,0,0,.12); display: flex; flex-direction: column; gap: .3rem; width: 100%; }
 button.small { padding: .2rem .5rem; font-size: .8rem; }
+.empty { padding: 1.5rem; text-align: center; color: var(--muted); background: #fff; border: 1px dashed var(--border); border-radius: 8px; }

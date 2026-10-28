@@ -1,7 +1,7 @@
 import { createContext, useCallback, useContext, useState, type FormEvent, type ReactNode } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { DateTime } from 'luxon'
-import { api } from '../api/client'
+import { api, ApiError } from '../api/client'
 import {
   keys, useCancelOccurrence, useCreateNote, useOccurrence, useResetOccurrence, useTags, useTrashNote,
   useUpdateNote, useUpdateOccurrence, useUserTz,
@@ -42,9 +42,12 @@ function useNote(noteId: number | null) {
 
 function NoteEditorModal({ target, onClose }: { target: EditorTarget; onClose: () => void }) {
   const noteId = target.kind === 'new' ? null : target.noteId
-  const { data: note, isLoading, error } = useNote(noteId)
+  const { data: note, isLoading, error, refetch } = useNote(noteId)
   // Для вхождения серии сначала спрашиваем: изменить только его или всю серию
   const [scope, setScope] = useState<'ask' | 'one' | 'series'>(target.kind === 'occurrence' ? 'ask' : 'series')
+  // Увеличение formKey пересоздаёт форму с актуальной версией заметки (после конфликта)
+  const [formKey, setFormKey] = useState(0)
+  const reload = () => refetch().then(() => setFormKey((k) => k + 1))
 
   if (error) return <Modal title="Заметка" onClose={onClose}><p className="error">{(error as Error).message}</p></Modal>
   if (noteId !== null && (isLoading || !note)) return <Modal title="Заметка" onClose={onClose}><p>Загрузка…</p></Modal>
@@ -61,9 +64,9 @@ function NoteEditorModal({ target, onClose }: { target: EditorTarget; onClose: (
         </Modal>
       )
     }
-    if (scope === 'one') return <OccurrenceForm note={note} originalStart={target.originalStart} onClose={onClose} />
+    if (scope === 'one') return <OccurrenceForm key={formKey} note={note} originalStart={target.originalStart} onClose={onClose} onReload={reload} />
   }
-  return <NoteForm note={note} defaultStart={target.kind === 'new' ? target.startAt : undefined} onClose={onClose} />
+  return <NoteForm key={formKey} note={note} defaultStart={target.kind === 'new' ? target.startAt : undefined} onClose={onClose} onReload={reload} />
 }
 
 function defaultStartIso(): string {
@@ -79,7 +82,22 @@ const FREQ_LABEL: Record<Freq | 'none', string> = {
   none: 'Не повторять', daily: 'Ежедневно', weekly: 'Еженедельно', monthly: 'Ежемесячно',
 }
 
-function NoteForm({ note, defaultStart, onClose }: { note?: Note; defaultStart?: string; onClose: () => void }) {
+/** Предупреждение о том, что заметку изменили в другой вкладке (D14). */
+function StaleBanner({ show, onReload }: { show: boolean; onReload: () => void }) {
+  if (!show) return null
+  return (
+    <p className="warn small" role="alert">
+      Заметку изменили в другой вкладке или на другом устройстве. Сохранение этой формы будет отклонено.{' '}
+      <button type="button" className="small" onClick={onReload}>Загрузить актуальную версию</button>
+    </p>
+  )
+}
+
+const isConflict = (err: unknown) => err instanceof ApiError && err.status === 409 && /друг(ой|ом)/.test(err.message)
+
+function NoteForm({ note, defaultStart, onClose, onReload }: {
+  note?: Note; defaultStart?: string; onClose: () => void; onReload: () => void
+}) {
   const tz = useUserTz()
   const { data: tags = [] } = useTags()
   const create = useCreateNote()
@@ -97,7 +115,10 @@ function NoteForm({ note, defaultStart, onClose }: { note?: Note; defaultStart?:
     note?.recurrence?.until ?? DateTime.fromISO(initialStart).plus({ months: 1 }).toISODate()!,
   )
   const [reminders, setReminders] = useState<number[]>(note?.reminders ?? [])
+  const [baseVersion] = useState(note?.version)
   const [error, setError] = useState<string | null>(null)
+  const stale = !!note && baseVersion !== undefined && note.version !== baseVersion
+  const [conflict, setConflict] = useState(false)
 
   const readOnly = note?.deleted_at != null
   const timeChanged = note ? start !== toLocalInput(note.start_at, tz) : false
@@ -116,11 +137,12 @@ function NoteForm({ note, defaultStart, onClose }: { note?: Note; defaultStart?:
         // Пояс заметки меняется, только если пользователь менял время (DECISIONS D4)
         timezone: note && !timeChanged ? note.timezone : tz,
       }
-      if (note) await update.mutateAsync({ id: note.id, ...payload })
+      if (note) await update.mutateAsync({ id: note.id, ...payload, version: baseVersion })
       else await create.mutateAsync(payload)
       onClose()
     } catch (err) {
-      setError((err as Error).message)
+      if (isConflict(err)) setConflict(true)
+      else setError((err as Error).message)
     }
   }
 
@@ -134,6 +156,7 @@ function NoteForm({ note, defaultStart, onClose }: { note?: Note; defaultStart?:
   return (
     <Modal title={title_} onClose={onClose}>
       <form className="form" onSubmit={submit}>
+        <StaleBanner show={stale || conflict} onReload={onReload} />
         <fieldset disabled={readOnly}>
           <label>Заголовок<input value={title} onChange={(e) => setTitle(e.target.value)} required maxLength={200} autoFocus /></label>
           <label>Текст<textarea value={body} onChange={(e) => setBody(e.target.value)} rows={5} /></label>
@@ -196,14 +219,18 @@ function NoteForm({ note, defaultStart, onClose }: { note?: Note; defaultStart?:
   )
 }
 
-function OccurrenceForm({ note, originalStart, onClose }: { note: Note; originalStart: string; onClose: () => void }) {
+function OccurrenceForm({ note, originalStart, onClose, onReload }: {
+  note: Note; originalStart: string; onClose: () => void; onReload: () => void
+}) {
   const { data: occ, error } = useOccurrence(note.id, originalStart)
   if (error) return <Modal title="Вхождение" onClose={onClose}><p className="error">{(error as Error).message}</p></Modal>
   if (!occ) return <Modal title="Вхождение" onClose={onClose}><p>Загрузка…</p></Modal>
-  return <OccurrenceFormInner note={note} occ={occ} onClose={onClose} />
+  return <OccurrenceFormInner note={note} occ={occ} onClose={onClose} onReload={onReload} />
 }
 
-function OccurrenceFormInner({ note, occ, onClose }: { note: Note; occ: Occurrence; onClose: () => void }) {
+function OccurrenceFormInner({ note, occ, onClose, onReload }: {
+  note: Note; occ: Occurrence; onClose: () => void; onReload: () => void
+}) {
   const tz = useUserTz()
   const update = useUpdateOccurrence()
   const cancel = useCancelOccurrence()
@@ -213,21 +240,30 @@ function OccurrenceFormInner({ note, occ, onClose }: { note: Note; occ: Occurren
   const [start, setStart] = useState(toLocalInput(occ.start_at, tz))
   const [active, setActive] = useState(occ.is_active)
   const [error, setError] = useState<string | null>(null)
+  const [baseVersion] = useState(note.version)
+  const [conflict, setConflict] = useState(false)
   const ids = { noteId: note.id, originalStart: occ.original_start }
 
   const run = async (p: Promise<unknown>) => {
     setError(null)
-    try { await p; onClose() } catch (err) { setError((err as Error).message) }
+    try {
+      await p
+      onClose()
+    } catch (err) {
+      if (isConflict(err)) setConflict(true)
+      else setError((err as Error).message)
+    }
   }
 
   function submit(e: FormEvent) {
     e.preventDefault()
-    run(update.mutateAsync({ ...ids, title, body, start_at: fromLocalInput(start, tz), is_active: active }))
+    run(update.mutateAsync({ ...ids, title, body, start_at: fromLocalInput(start, tz), is_active: active, version: baseVersion }))
   }
 
   return (
     <Modal title="Изменение одного вхождения" onClose={onClose}>
       <form className="form" onSubmit={submit}>
+        <StaleBanner show={conflict || note.version !== baseVersion} onReload={onReload} />
         <p className="muted small">
           Серия «{note.title}», вхождение от {formatDateTime(occ.original_start, tz)}. Остальные вхождения не изменятся.
         </p>
@@ -241,7 +277,9 @@ function OccurrenceFormInner({ note, occ, onClose }: { note: Note; occ: Occurren
         </label>
         {error && <p className="error" role="alert">{error}</p>}
         <div className="actions">
-          <button type="button" className="danger" onClick={() => run(cancel.mutateAsync(ids))}>Удалить это вхождение</button>
+          <button type="button" className="danger" onClick={() =>
+            confirm(`Удалить вхождение от ${formatDateTime(occ.start_at, tz)}? Остальные вхождения серии останутся. Вернуть его можно, только изменив серию.`)
+            && run(cancel.mutateAsync(ids))}>Удалить это вхождение</button>
           {occ.is_exception && <button type="button" onClick={() => run(reset.mutateAsync(ids))}>Как в серии</button>}
           <span className="spacer" />
           <button type="button" onClick={onClose}>Отмена</button>

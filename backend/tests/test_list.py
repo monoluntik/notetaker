@@ -111,3 +111,22 @@ def test_performance_with_5000_notes(client, engine):
     assert client.get("/api/notes", params={"q": "special"}).json()["total"] == 50
     print("timings, s:", {k: round(v, 3) for k, v in timings.items()})
     assert max(timings.values()) < 1.0, timings
+
+
+def test_search_matches_edited_occurrence(client):
+    """Серия находится по заголовку/тексту, изменённому у одного вхождения; удалённое вхождение — нет."""
+    t = make_tag(client)
+    n = make_note(client, [t["id"]], title="Standup", start_at="2026-11-01T09:00:00Z", timezone="UTC",
+                  recurrence={"freq": "daily", "until": "2026-11-05"})
+    make_note(client, [t["id"]], title="Other")
+    client.patch(f"/api/notes/{n['id']}/occurrences/2026-11-03T09:00:00Z",
+                 json={"title": "Retro", "body": "квартальный обзор"})
+    client.patch(f"/api/notes/{n['id']}/occurrences/2026-11-04T09:00:00Z", json={"title": "Отменённое"})
+    client.delete(f"/api/notes/{n['id']}/occurrences/2026-11-04T09:00:00Z")
+    assert titles(client.get("/api/notes", params={"q": "retro"})) == ["Standup"]
+    assert titles(client.get("/api/notes", params={"q": "КВАРТАЛЬН"})) == ["Standup"]
+    assert titles(client.get("/api/notes", params={"q": "Отменённое"})) == []
+    # совпадение и в серии, и во вхождении не даёт дублей
+    client.patch(f"/api/notes/{n['id']}/occurrences/2026-11-02T09:00:00Z", json={"title": "Standup special"})
+    r = client.get("/api/notes", params={"q": "standup"}).json()
+    assert r["total"] == 1

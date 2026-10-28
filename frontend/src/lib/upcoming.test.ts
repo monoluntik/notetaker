@@ -15,6 +15,7 @@ const data: Upcoming = {
   today: [occ('meeting', '2026-11-04T10:00:00Z'), occ('inactive', '2026-11-04T10:00:00Z', false)],
   week: [occ('friday', '2026-11-06T10:00:00Z')],
   overdue: [occ('yesterday', '2026-11-03T10:00:00Z')],
+  overdue_total: 120, // сервер вернул 1 из 120
 }
 
 const names = (s: Occurrence[]) => s.map((o) => o.title)
@@ -24,12 +25,14 @@ describe('recategorize', () => {
     const s = recategorize(data, new Date('2026-11-04T09:59:00Z'))
     expect(names(s.today)).toEqual(['meeting', 'inactive'])
     expect(names(s.overdue)).toEqual(['yesterday'])
+    expect(s.overdueTotal).toBe(120)
   })
 
   it('moves an active note to overdue once its time passes, without refetch', () => {
     const s = recategorize(data, new Date('2026-11-04T10:00:01Z'))
     expect(names(s.today)).toEqual([])
     expect(names(s.overdue)).toEqual(['meeting', 'yesterday']) // неактивная не попадает в прошедшие
+    expect(s.overdueTotal).toBe(121)
     expect(names(s.week)).toEqual(['friday'])
   })
 

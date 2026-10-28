@@ -21,6 +21,7 @@ export interface Note {
   tags: Tag[]
   recurrence: Recurrence | null
   reminders: number[]
+  version: number
 }
 
 export type Freq = 'daily' | 'weekly' | 'monthly'
@@ -40,6 +41,7 @@ export interface Page<T> {
 export interface UserSettings {
   email: string | null
   timezone: string
+  trash_retention_days?: number
 }
 
 export interface NoteInput {
@@ -51,6 +53,7 @@ export interface NoteInput {
   is_active: boolean
   recurrence: Recurrence | null
   reminders: number[]
+  version?: number
 }
 
 export interface OccurrenceInput {
@@ -58,6 +61,7 @@ export interface OccurrenceInput {
   body?: string
   start_at?: string
   is_active?: boolean
+  version?: number
 }
 
 export interface Occurrence {
@@ -81,6 +85,7 @@ export interface Upcoming {
   today: Occurrence[]
   week: Occurrence[]
   overdue: Occurrence[]
+  overdue_total: number
 }
 
 export interface AppNotification {

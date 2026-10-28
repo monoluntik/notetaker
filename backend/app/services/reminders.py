@@ -17,7 +17,7 @@ from sqlalchemy.orm import Session
 
 from app.email import Email, EmailSender
 from app.models import Note, ReminderDelivery, SchedulerState
-from app.services.occurrences import occurrences_between
+from app.services.occurrences import current_occurrence, occurrences_between
 from app.services.settings import get_settings_row
 from app.timeutil import get_zone
 
@@ -93,12 +93,24 @@ def scan(db: Session, now: datetime) -> ScanResult:
                     continue  # уже обработано ранее
                 if started:
                     missed += 1
-                    log.info("reminder missed (note=%s, start=%s)", occ.note_id, occ.start_at)
                 else:
                     created.append(db.get(ReminderDelivery, row_id))
     state.last_scan_at = now
     db.commit()
+    if missed:
+        log.warning(
+            "%s reminder(s) marked missed: event already started when the scheduler ran "
+            "(downtime %s → %s, policy D7: not sent)", missed, watermark.isoformat(), now.isoformat(),
+        )
     return ScanResult(created=created, missed=missed)
+
+
+def mask_email(addr: str | None) -> str:
+    """m***@example.com — адрес в логах без полного раскрытия."""
+    if not addr or "@" not in addr:
+        return "-"
+    local, domain = addr.split("@", 1)
+    return f"{local[:1]}***@{domain}"
 
 
 def _render_email(d: ReminderDelivery, tz_name: str) -> Email:
@@ -117,6 +129,23 @@ def _render_email(d: ReminderDelivery, tz_name: str) -> Email:
     )
 
 
+def _obsolete_reason(db: Session, d: ReminderDelivery) -> str | None:
+    """Почему напоминание из очереди больше не нужно отправлять (None — отправлять)."""
+    note = db.get(Note, d.note_id)
+    if note is None or note.deleted_at is not None:
+        return "заметка удалена"
+    if d.offset_minutes not in note.reminders:
+        return "напоминание отключено"
+    occ = current_occurrence(note, d.original_start)
+    if occ is None:
+        return "вхождение удалено или серия изменена"
+    if not occ.is_active:
+        return "заметка неактивна"
+    if occ.start_at != d.occurrence_start:
+        return "время заметки изменено"  # для нового времени scan() создаст новое событие
+    return None
+
+
 def deliver_pending(db: Session, sender: EmailSender, now: datetime, limit: int = 50) -> int:
     """Отправляет ожидающие email. Возвращает число успешно отправленных писем."""
     sent = 0
@@ -132,22 +161,42 @@ def deliver_pending(db: Session, sender: EmailSender, now: datetime, limit: int 
         )
         if d is None:
             break
+        # Между сканом и отправкой (например, пока почта была недоступна) заметку могли удалить,
+        # деактивировать или перенести — такое письмо уже вводило бы в заблуждение.
+        reason = _obsolete_reason(db, d)
+        if reason:
+            d.status = "cancelled"
+            d.last_error = reason
+            db.commit()
+            log.info("reminder email cancelled: delivery=%s note=%s reason=%s", d.id, d.note_id, reason)
+            continue
         try:
             sender.send(_render_email(d, tz_name))
         except Exception as exc:  # noqa: BLE001 — любая ошибка адаптера = неудачная попытка
             d.attempts += 1
-            d.last_error = str(exc)[:500]
+            d.last_error = f"{type(exc).__name__}: {exc}"[:500]
             if d.attempts >= MAX_ATTEMPTS:
                 d.status = "failed"
             db.commit()
-            log.warning("email failed (delivery=%s, attempt=%s): %s", d.id, d.attempts, exc)
-            if d.status == "pending":
-                break  # почта недоступна — повторим на следующем тике
-            continue
+            if d.status == "failed":
+                log.error(
+                    "email delivery gave up after %s attempts: delivery=%s note=%s to=%s last_error=%s "
+                    "(in-app notification was shown; email will not be retried)",
+                    d.attempts, d.id, d.note_id, mask_email(d.email_to), d.last_error,
+                )
+                continue
+            log.warning(
+                "email delivery failed: delivery=%s note=%s to=%s attempt=%s/%s error=%s; "
+                "will retry on the next scheduler tick",
+                d.id, d.note_id, mask_email(d.email_to), d.attempts, MAX_ATTEMPTS, d.last_error,
+            )
+            break  # почта недоступна — остальные письма тоже подождут следующего тика
         d.status = "sent"
         d.attempts += 1
         d.sent_at = now
         db.commit()  # строка оставалась заблокированной до фиксации статуса
+        log.info("reminder email sent: delivery=%s note=%s to=%s attempt=%s",
+                 d.id, d.note_id, mask_email(d.email_to), d.attempts)
         sent += 1
     return sent
 

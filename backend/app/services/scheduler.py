@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from app.email import EmailSender
 from app.realtime import Hub
 from app.schemas import NotificationOut
+from app.services import notes as notes_svc
 from app.services import reminders
 
 log = logging.getLogger("notetaker.scheduler")
@@ -22,8 +23,9 @@ log = logging.getLogger("notetaker.scheduler")
 
 class ReminderScheduler:
     def __init__(self, factory: sessionmaker[Session], sender: EmailSender, hub: Hub,
-                 clock: Callable[[], datetime], interval: float):
+                 clock: Callable[[], datetime], interval: float, trash_retention_days: int = 30):
         self.factory, self.sender, self.hub, self.clock, self.interval = factory, sender, hub, clock, interval
+        self.trash_retention_days = trash_retention_days
         self._task: asyncio.Task | None = None
 
     def _scan(self) -> list[dict]:
@@ -35,18 +37,36 @@ class ReminderScheduler:
         with self.factory() as db:
             return reminders.deliver_pending(db, self.sender, self.clock())
 
+    def _purge_trash(self) -> int:
+        with self.factory() as db:
+            return notes_svc.purge_expired_trash(db, self.clock(), self.trash_retention_days)
+
     async def tick(self) -> None:
-        created = await asyncio.to_thread(self._scan)
-        for n in created:
-            await self.hub.broadcast({"type": "reminder", "notification": n})
-        await asyncio.to_thread(self._deliver)
+        # Стадии независимы: сбой отправки почты не должен мешать уведомлениям и наоборот.
+        stage = "scan"
+        try:
+            created = await asyncio.to_thread(self._scan)
+            stage = "notify"
+            for n in created:
+                await self.hub.broadcast({"type": "reminder", "notification": n})
+        except Exception:
+            log.exception("scheduler stage '%s' failed; reminders will be re-checked on the next tick "
+                          "(no duplicates: events are deduplicated by key)", stage)
+        try:
+            await asyncio.to_thread(self._deliver)
+        except Exception:
+            log.exception("scheduler stage 'deliver' failed; pending emails stay queued for the next tick")
+        purged = await asyncio.to_thread(self._purge_trash)
+        if purged:
+            log.info("trash auto-purge: %s note(s) older than %s days deleted", purged, self.trash_retention_days)
+            await self.hub.broadcast({"type": "changed", "path": "/api/trash"})
 
     async def _run(self) -> None:
         while True:
             try:
                 await self.tick()
             except Exception:  # планировщик не должен умирать из-за одной ошибки
-                log.exception("scheduler tick failed")
+                log.exception("scheduler tick failed; next attempt in %ss", self.interval)
             await asyncio.sleep(self.interval)
 
     def start(self) -> None:

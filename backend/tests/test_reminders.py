@@ -281,3 +281,106 @@ def test_reminder_already_due_at_creation_is_sent_immediately_not_late(client, a
     deliver(app, now)
     assert [(r["status"], r["late"]) for r in rows(engine)] == [("sent", False)]
     assert not emails(app)[0].subject.startswith("[с опозданием]")
+
+
+def _pending_while_smtp_down(client, app, **note_kw):
+    n = make_note(client, [make_tag(client, "smtp")["id"]], start_at="2026-11-04T10:00:00Z", reminders=[10], **note_kw)
+    app.state.email_sender.fail_times = 1  # почта недоступна в момент срабатывания
+    scan(app, "2026-11-04T09:00:00")
+    scan(app, "2026-11-04T09:50:00")
+    deliver(app, "2026-11-04T09:50:00")
+    return n
+
+
+@pytest.mark.parametrize("change, reason", [
+    (lambda c, n: c.delete(f"/api/notes/{n['id']}"), "заметка удалена"),
+    (lambda c, n: c.patch(f"/api/notes/{n['id']}", json={"is_active": False}), "заметка неактивна"),
+    (lambda c, n: c.patch(f"/api/notes/{n['id']}", json={"reminders": [60]}), "напоминание отключено"),
+    (lambda c, n: c.patch(f"/api/notes/{n['id']}", json={"start_at": "2026-11-04T12:00:00Z"}), "время заметки изменено"),
+])
+def test_pending_email_cancelled_when_note_changed(client, app, engine, tag, change, reason):
+    n = _pending_while_smtp_down(client, app)
+    change(client, n)
+    deliver(app, "2026-11-04T09:51:00")
+    assert emails(app) == []
+    with engine.connect() as c:
+        row = c.execute(text("SELECT status, last_error FROM reminder_deliveries")).one()
+    assert tuple(row) == ("cancelled", reason)
+
+
+def test_pending_email_cancelled_for_deleted_occurrence(client, app, engine, tag):
+    n = _pending_while_smtp_down(client, app, timezone="UTC", recurrence={"freq": "daily", "until": "2026-11-06"})
+    client.delete(f"/api/notes/{n['id']}/occurrences/2026-11-04T10:00:00Z")
+    deliver(app, "2026-11-04T09:51:00")
+    assert emails(app) == [] and rows(engine)[0]["status"] == "cancelled"
+
+
+def test_pending_email_still_sent_after_unrelated_edit(client, app, engine, tag):
+    n = _pending_while_smtp_down(client, app)
+    client.patch(f"/api/notes/{n['id']}", json={"body": "уточнение"})
+    deliver(app, "2026-11-04T09:51:00")
+    assert len(emails(app)) == 1 and rows(engine)[0]["status"] == "sent"
+
+
+def test_restored_note_resumes_reminders(client, app, tag):
+    n = make_note(client, [tag["id"]], start_at="2026-11-04T10:00:00Z", reminders=[10, 60])
+    scan(app, "2026-11-04T08:00:00")
+    client.delete(f"/api/notes/{n['id']}")
+    assert scan(app, "2026-11-04T09:00:00").created == []  # в корзине — нет напоминаний
+    client.post(f"/api/notes/{n['id']}/restore")
+    # часовое наступило, пока заметка была в корзине, но событие ещё впереди → отправляется (D7)
+    assert sorted(c.offset_minutes for c in scan(app, "2026-11-04T09:50:00").created) == [10, 60]
+
+
+def test_reactivated_note_gets_reminders(client, app, tag):
+    n = make_note(client, [tag["id"]], start_at="2026-11-04T10:00:00Z", reminders=[10], is_active=False)
+    scan(app, "2026-11-04T08:00:00")
+    assert scan(app, "2026-11-04T09:50:00").created == []
+    client.patch(f"/api/notes/{n['id']}", json={"is_active": True})
+    assert len(scan(app, "2026-11-04T09:51:00").created) == 1
+
+
+def test_email_failures_are_logged_with_context(client, app, tag, caplog):
+    import logging
+    make_note(client, [tag["id"]], start_at="2026-11-04T10:00:00Z", reminders=[10])
+    app.state.email_sender.fail_times = 100
+    scan(app, "2026-11-04T09:00:00")
+    scan(app, "2026-11-04T09:50:00")
+    with caplog.at_level(logging.INFO, logger="notetaker"):
+        for _ in range(reminders.MAX_ATTEMPTS):
+            deliver(app, "2026-11-04T09:50:00")
+    warnings = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+    errors = [r.getMessage() for r in caplog.records if r.levelno == logging.ERROR]
+    assert len(warnings) == 4 and "attempt=1/5" in warnings[0] and "will retry" in warnings[0]
+    assert "m***@example.com" in warnings[0] and "me@example.com" not in warnings[0]
+    assert len(errors) == 1 and "gave up after 5 attempts" in errors[0] and "ConnectionError" in errors[0]
+
+
+def test_missed_reminders_are_logged(client, app, tag, caplog):
+    import logging
+    make_note(client, [tag["id"]], start_at="2026-11-04T10:00:00Z", reminders=[10])
+    scan(app, "2026-11-04T09:45:00")
+    with caplog.at_level(logging.INFO, logger="notetaker"):
+        scan(app, "2026-11-04T10:15:00")
+    assert any("1 reminder(s) marked missed" in r.getMessage() for r in caplog.records)
+
+
+def test_scheduler_survives_failing_stage_and_logs_it(client, app, tag, caplog, monkeypatch):
+    import logging
+    make_note(client, [tag["id"]], start_at="2026-11-04T10:00:00Z", reminders=[10])
+    app.state.clock = lambda: T("2026-11-04T09:00:00")
+    client.portal.call(app.state.scheduler.tick)
+
+    def broken_scan():
+        raise RuntimeError("БД недоступна (имитация)")
+
+    monkeypatch.setattr(app.state.scheduler, "_scan", broken_scan)
+    app.state.clock = lambda: T("2026-11-04T09:50:00")
+    with caplog.at_level(logging.INFO, logger="notetaker"):
+        client.portal.call(app.state.scheduler.tick)  # не падает
+    assert any("stage 'scan' failed" in r.getMessage() for r in caplog.records)
+    monkeypatch.undo()
+    client.portal.call(app.state.scheduler.tick)  # следующий тик восстанавливается
+    with app.state.sessionmaker() as db:
+        reminders.deliver_pending(db, app.state.email_sender, T("2026-11-04T09:50:00"))
+    assert len(emails(app)) == 1

@@ -11,10 +11,14 @@ class Settings(BaseSettings):
     database_url: str = "postgresql+psycopg://postgres@127.0.0.1:5433/notetaker"
     cors_origins: list[str] = ["http://localhost:5173", "http://127.0.0.1:5173"]
     default_timezone: str = "UTC"
+    log_level: str = "INFO"  # уровень логов приложения (логгеры notetaker.*)
 
     # Планировщик напоминаний
     scheduler_enabled: bool = True
     scheduler_interval_seconds: float = 15.0
+
+    # Заметки в корзине удаляются окончательно через столько дней
+    trash_retention_days: int = 30
 
     # Email: "console" (лог), "smtp" (например, Mailpit в docker compose), "memory" (тесты)
     email_backend: str = "console"

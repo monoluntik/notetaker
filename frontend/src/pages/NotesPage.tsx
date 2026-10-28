@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { useSearchParams } from 'react-router-dom'
+import { Link, useSearchParams } from 'react-router-dom'
 import { useNotesPage, useTags, useUpdateNote, useUserTz } from '../api/hooks'
 import { useOpenEditor } from '../components/NoteEditor'
 import { NoteRow } from '../components/NoteRow'
@@ -37,6 +37,7 @@ export function NotesPage() {
   }, [search])
 
   const selectedTags = params.getAll('tag')
+  const hasFilters = ['q', 'tag', 'active', 'from', 'to'].some((k) => params.has(k))
   const page = Number(params.get('page') ?? 1)
 
   // Параметры API: даты периода переводим из локальных дат пользователя в UTC
@@ -97,7 +98,21 @@ export function NotesPage() {
             extra={<label className="row small"><input type="checkbox" checked={n.is_active}
               onChange={() => toggle.mutate({ id: n.id, is_active: !n.is_active })} /> активна</label>} />
         ))}
-        {data && data.items.length === 0 && <li className="muted">Ничего не найдено</li>}
+        {data && data.items.length === 0 && (
+          <li className="empty" data-testid="notes-empty">
+            {hasFilters ? (
+              <>Ничего не найдено по заданным условиям.{' '}
+                <button className="small" onClick={() => { setSearch(''); setParams(new URLSearchParams(), { replace: true }) }}>
+                  Сбросить фильтры
+                </button>
+              </>
+            ) : tags.length === 0 ? (
+              <>Заметок пока нет. У каждой заметки должен быть тег — начните с <Link to="/tags">создания тега</Link>.</>
+            ) : (
+              <>Заметок пока нет. <button className="small primary" onClick={() => open({ kind: 'new' })}>Создать первую заметку</button></>
+            )}
+          </li>
+        )}
       </ul>
 
       <div className="pager">

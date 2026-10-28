@@ -12,9 +12,11 @@ const TICK_MS = 15_000
 
 export function UpcomingPage() {
   const tz = useUserTz()
+  const [overdueLimit, setOverdueLimit] = useState(50)
   const { data, refetch } = useQuery({
-    queryKey: [...keys.notes, 'upcoming'],
-    queryFn: () => api<Upcoming>('/upcoming'),
+    queryKey: [...keys.notes, 'upcoming', overdueLimit],
+    queryFn: () => api<Upcoming>(`/upcoming?overdue_limit=${overdueLimit}`),
+    placeholderData: (prev) => prev,
     refetchInterval: 5 * 60_000,
   })
   const [now, setNow] = useState(() => new Date())
@@ -36,19 +38,28 @@ export function UpcomingPage() {
       <h1>Предстоящие</h1>
       <Section title="Сегодня" items={s.today} tz={tz} timeOnly empty="На сегодня больше ничего" />
       <Section title="На этой неделе" items={s.week} tz={tz} empty="До конца недели пусто" />
-      <Section title="Прошедшие активные" items={s.overdue} tz={tz} empty="Нет просроченных активных заметок"
-        hint="Активные заметки, время которых прошло (за последние 30 дней). Отметьте неактивной, чтобы убрать." />
+      <Section title="Прошедшие активные" items={s.overdue} total={s.overdueTotal} tz={tz} empty="Нет просроченных активных заметок"
+        hint="Все активные заметки, время которых прошло. Отметьте заметку неактивной, чтобы убрать её отсюда." />
+      {s.overdue.length < s.overdueTotal && (
+        <p className="muted small" data-testid="overdue-more">
+          Показано {s.overdue.length} из {s.overdueTotal}.{' '}
+          <button className="small" onClick={() => setOverdueLimit((l) => Math.min(1000, l + 100))} disabled={overdueLimit >= 1000}>
+            Показать ещё
+          </button>
+          {overdueLimit >= 1000 && ' Остальные — в списке «Заметки» с фильтром «Активные» и периодом.'}
+        </p>
+      )}
     </section>
   )
 }
 
-function Section({ title, items, tz, empty, timeOnly, hint }: {
-  title: string; items: Occurrence[]; tz: string; empty: string; timeOnly?: boolean; hint?: string
+function Section({ title, items, total, tz, empty, timeOnly, hint }: {
+  title: string; items: Occurrence[]; total?: number; tz: string; empty: string; timeOnly?: boolean; hint?: string
 }) {
   const open = useOpenEditor()
   return (
     <div className="upcoming-section" data-testid={`section-${title}`}>
-      <h2>{title} <span className="muted small">({items.length})</span></h2>
+      <h2>{title} <span className="muted small">({total ?? items.length})</span></h2>
       {hint && <p className="muted small">{hint}</p>}
       <ul className="note-list">
         {items.map((o) => (
