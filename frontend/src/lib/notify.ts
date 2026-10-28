@@ -62,3 +62,38 @@ export function pruneClaims(storage: Storage = localStorage, maxAgeMs = 7 * 24 *
     if (k?.startsWith('notetaker:notified:') && now - Number(storage.getItem(k)) > maxAgeMs) storage.removeItem(k)
   }
 }
+
+/**
+ * Требование задания: «однажды показанное уведомление не всплывает снова после обновления
+ * страницы». Показанные в этом браузере id запоминаются; при (пере)загрузке непрочитанных с
+ * сервера уже показанные отбрасываются. Живое событие по WebSocket показывается во всех
+ * открытых вкладках (оно приходит один раз). Метки старше 7 дней удаляет pruneShown.
+ */
+const SHOWN = (id: number) => `notetaker:shown:${id}`
+
+function safeStorage(storage?: Storage): Storage | null {
+  try { return storage ?? globalThis.localStorage ?? null } catch { return null }
+}
+
+export function rememberShown(ids: number[], storage?: Storage) {
+  const s = safeStorage(storage)
+  if (!s) return
+  for (const id of ids) {
+    try { if (!s.getItem(SHOWN(id))) s.setItem(SHOWN(id), String(Date.now())) } catch { /* хранилище недоступно */ }
+  }
+}
+
+export function wasShown(id: number, storage?: Storage): boolean {
+  const s = safeStorage(storage)
+  try { return !!s?.getItem(SHOWN(id)) } catch { return false }
+}
+
+export function pruneShown(storage?: Storage, maxAgeMs = 7 * 24 * 3600_000) {
+  const s = safeStorage(storage)
+  if (!s) return
+  const now = Date.now()
+  for (let i = s.length - 1; i >= 0; i--) {
+    const k = s.key(i)
+    if (k?.startsWith('notetaker:shown:') && now - Number(s.getItem(k)) > maxAgeMs) s.removeItem(k)
+  }
+}

@@ -48,10 +48,17 @@ test('two tabs: data sync, one reminder shown in both tabs, single system notifi
   await tab1.waitForTimeout(1500) // даём второй вкладке шанс (ошибочно) показать уведомление
   expect((await notifCount(tab1)) + (await notifCount(tab2))).toBe(1)
 
-  await toast1.getByRole('button', { name: 'Прочитано' }).click()
-  await expect(toast2).toBeHidden()
+  // Требование: однажды показанное не всплывает снова после обновления страницы
+  await tab2.reload()
+  await expectOnline(tab2)
+  await tab2.waitForTimeout(1500)
+  await expect(toast2).toHaveCount(0)
+  expect(await notifCount(tab2)).toBe(0) // и системное уведомление после перезагрузки не повторяется
 
-  // Новая вкладка, открытая после прочтения, уведомление не показывает
+  await toast1.getByRole('button', { name: 'Прочитано' }).click()
+  await expect(toast1).toBeHidden()
+
+  // Новая вкладка, открытая после прочтения, уведомление не показывает (прочитано на сервере)
   const tab3 = await context.newPage()
   await tab3.goto('/notes')
   await expectOnline(tab3)

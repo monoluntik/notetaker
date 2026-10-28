@@ -3,7 +3,7 @@ import { createContext, useCallback, useContext, useEffect, useState, type React
 import { api } from '../api/client'
 import { keys, useUserTz } from '../api/hooks'
 import type { AppNotification } from '../api/types'
-import { electLeader, pruneClaims, shouldShowSystemNotification, showSystemNotification } from '../lib/notify'
+import { electLeader, pruneClaims, pruneShown, rememberShown, shouldShowSystemNotification, showSystemNotification, wasShown } from '../lib/notify'
 import { formatDateTime } from '../lib/time'
 import { useOpenEditor } from './NoteEditor'
 import { Icon } from './ui/Icon'
@@ -26,6 +26,7 @@ export function Realtime({ children }: { children: ReactNode }) {
   const [online, setOnline] = useState(false)
 
   const add = useCallback((list: AppNotification[]) => {
+    rememberShown(list.map((n) => n.id))
     setItems((prev) => {
       const ids = new Set(prev.map((p) => p.id))
       return [...prev, ...list.filter((n) => !ids.has(n.id))]
@@ -33,7 +34,7 @@ export function Realtime({ children }: { children: ReactNode }) {
   }, [])
 
   useEffect(() => {
-    try { pruneClaims() } catch { /* localStorage может быть недоступен */ }
+    try { pruneClaims(); pruneShown() } catch { /* localStorage может быть недоступен */ }
     const leadership = electLeader()
     let ws: WebSocket | null = null
     let retry = 0
@@ -46,8 +47,9 @@ export function Realtime({ children }: { children: ReactNode }) {
       ws.onopen = () => {
         retry = 0
         setOnline(true)
-        // После (пере)подключения: непрочитанные уведомления и свежие данные
-        api<AppNotification[]>('/notifications').then(add).catch(() => {})
+        // После (пере)подключения: непрочитанные уведомления, ещё не показанные в этом браузере
+        // (однажды показанное не всплывает снова после обновления страницы), и свежие данные
+        api<AppNotification[]>('/notifications').then((list) => add(list.filter((n) => !wasShown(n.id)))).catch(() => {})
         qc.invalidateQueries({ queryKey: keys.notes })
       }
       ws.onmessage = (ev) => {

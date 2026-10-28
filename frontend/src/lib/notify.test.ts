@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { claimOnceFallback, electLeader, pruneClaims } from './notify'
+import { claimOnceFallback, electLeader, pruneClaims, pruneShown, rememberShown, wasShown } from './notify'
 
 class MemStorage implements Storage {
   private m = new Map<string, string>()
@@ -56,5 +56,23 @@ describe('fallback claim and pruning', () => {
     pruneClaims(s)
     expect(s.getItem('notetaker:notified:1')).toBeNull()
     expect(s.getItem('notetaker:notified:2')).not.toBeNull()
+  })
+})
+
+describe('shown once per browser', () => {
+  it('a notification shown before reload is filtered out after reload', () => {
+    const s = new MemStorage()
+    expect(wasShown(5, s)).toBe(false)
+    rememberShown([5], s) // показано во вкладке
+    // «перезагрузка»: сервер снова отдаёт непрочитанные 5 и 6
+    expect([5, 6].filter((id) => !wasShown(id, s))).toEqual([6])
+  })
+
+  it('prunes old shown marks', () => {
+    const s = new MemStorage()
+    s.setItem('notetaker:shown:1', String(Date.now() - 8 * 24 * 3600_000))
+    rememberShown([2], s)
+    pruneShown(s)
+    expect([wasShown(1, s), wasShown(2, s)]).toEqual([false, true])
   })
 })
