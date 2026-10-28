@@ -328,7 +328,9 @@ def test_restored_note_resumes_reminders(client, app, tag):
     client.delete(f"/api/notes/{n['id']}")
     assert scan(app, "2026-11-04T09:00:00").created == []  # в корзине — нет напоминаний
     client.post(f"/api/notes/{n['id']}/restore")
-    # часовое наступило, пока заметка была в корзине, но событие ещё впереди → отправляется (D7)
+    # Восстановление здесь происходит по реальным часам — раньше смоделированных сроков, поэтому
+    # оба напоминания ещё «впереди» и возвращаются. Восстановление после срока —
+    # test_restored_after_due_returns_only_reminders_not_yet_due.
     assert sorted(c.offset_minutes for c in scan(app, "2026-11-04T09:50:00").created) == [10, 60]
 
 
@@ -400,3 +402,54 @@ def test_repeated_scans_do_not_burn_delivery_ids(client, app, engine, tag):
     for m in range(1, 41):  # 40 тиков, пока событие остаётся в окне скана
         scan(app, f"2026-11-04T10:{m:02d}:00")
     assert seq() == before and len(rows(engine)) == 1
+
+
+# --- Требования задания (PDF): активация и восстановление после срока ---
+
+def test_reactivated_after_due_does_not_send_past_reminders(client, app, engine, tag):
+    """«Активировали после срока — прошедшие напоминания не досылаются»; будущие возвращаются."""
+    n = make_note(client, [tag["id"]], start_at="2026-11-04T10:00:00Z", reminders=[10, 60], is_active=False)
+    scan(app, "2026-11-04T08:00:00")
+    app.state.clock = lambda: T("2026-11-04T09:30:00")  # срок «за 1 час» (09:00) прошёл, «за 10 минут» — нет
+    client.patch(f"/api/notes/{n['id']}", json={"is_active": True})
+    assert scan(app, "2026-11-04T09:30:15").created == []
+    assert [c.offset_minutes for c in scan(app, "2026-11-04T09:50:00").created] == [10]
+    deliver(app, "2026-11-04T09:50:00")
+    assert len(emails(app)) == 1 and [r["offset_minutes"] for r in rows(engine)] == [10]
+
+
+def test_restored_after_due_returns_only_reminders_not_yet_due(client, app, engine, tag):
+    """«Восстановление из корзины возвращает те, чей срок ещё не наступил»."""
+    n = make_note(client, [tag["id"]], start_at="2026-11-04T10:00:00Z", reminders=[10, 60])
+    scan(app, "2026-11-04T08:00:00")
+    client.delete(f"/api/notes/{n['id']}")
+    assert scan(app, "2026-11-04T09:00:00").created == []  # в корзине — нет
+    app.state.clock = lambda: T("2026-11-04T09:30:00")
+    client.post(f"/api/notes/{n['id']}/restore")
+    assert scan(app, "2026-11-04T09:30:15").created == []
+    assert [c.offset_minutes for c in scan(app, "2026-11-04T09:50:00").created] == [10]
+
+
+def test_pending_email_not_sent_if_due_while_inactive(client, app, engine, tag):
+    """Письмо в очереди (почта была недоступна), срок которого наступил до повторной активации, не уходит."""
+    n = make_note(client, [tag["id"]], start_at="2026-11-04T10:00:00Z", reminders=[10])
+    app.state.email_sender.fail_times = 1
+    scan(app, "2026-11-04T09:00:00")
+    scan(app, "2026-11-04T09:50:00")
+    deliver(app, "2026-11-04T09:50:00")  # почта недоступна — письмо осталось в очереди
+    app.state.clock = lambda: T("2026-11-04T09:51:00")
+    client.patch(f"/api/notes/{n['id']}", json={"is_active": False})
+    app.state.clock = lambda: T("2026-11-04T09:52:00")
+    client.patch(f"/api/notes/{n['id']}", json={"is_active": True})
+    deliver(app, "2026-11-04T09:52:30")
+    assert emails(app) == [] and rows(engine)[0]["status"] == "cancelled"
+
+
+def test_reactivated_before_due_keeps_all_reminders(client, app, tag):
+    """«Активировали обратно до срока — напоминания возвращаются»."""
+    n = make_note(client, [tag["id"]], start_at="2026-11-04T10:00:00Z", reminders=[10, 60], is_active=False)
+    scan(app, "2026-11-04T08:00:00")
+    app.state.clock = lambda: T("2026-11-04T08:30:00")
+    client.patch(f"/api/notes/{n['id']}", json={"is_active": True})
+    assert [c.offset_minutes for c in scan(app, "2026-11-04T09:00:00").created] == [60]
+    assert [c.offset_minutes for c in scan(app, "2026-11-04T09:50:00").created] == [10]

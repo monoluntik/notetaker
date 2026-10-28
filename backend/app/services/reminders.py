@@ -60,18 +60,22 @@ def scan(db: Session, now: datetime) -> ScanResult:
     note_ids = {o.note_id for o in occs}
     offsets: dict[int, list[int]] = {}
     updated: dict[int, datetime] = {}
+    resume: dict[int, datetime | None] = {}
     if note_ids:
         for nid, off in db.execute(select(NoteReminder.note_id, NoteReminder.offset_minutes).where(NoteReminder.note_id.in_(note_ids))):
             offsets.setdefault(nid, []).append(off)
-        updated = dict(db.execute(select(Note.id, Note.updated_at).where(Note.id.in_(note_ids))).tuples().all())
+        for nid, upd, res in db.execute(select(Note.id, Note.updated_at, Note.reminders_resume_at).where(Note.id.in_(note_ids))):
+            updated[nid], resume[nid] = upd, res
     notes_with_reminders = {nid: (sorted(offsets.get(nid, [])), updated[nid]) for nid in note_ids}
     created: list[ReminderDelivery] = []
     missed = 0
     candidates: list[tuple] = []  # (occ, offset, fire_at)
     for occ in occs:
+        resume_at = resume.get(occ.note_id)
         for offset in notes_with_reminders[occ.note_id][0]:
             fire_at = occ.start_at - timedelta(minutes=offset)
-            if fire_at <= now:
+            # Срок наступил, пока заметка была неактивна или в корзине, — не досылаем (D7)
+            if fire_at <= now and not (resume_at and fire_at < resume_at):
                 candidates.append((occ, offset, fire_at))
 
     # Уже обработанные события отбрасываем заранее одним запросом: INSERT … ON CONFLICT DO NOTHING
@@ -170,6 +174,8 @@ def _obsolete_reason(db: Session, d: ReminderDelivery) -> str | None:
         return "заметка неактивна"
     if occ.start_at != d.occurrence_start:
         return "время заметки изменено"  # для нового времени scan() создаст новое событие
+    if note.reminders_resume_at and d.fire_at < note.reminders_resume_at:
+        return "срок наступил, пока заметка была неактивна или в корзине"
     return None
 
 

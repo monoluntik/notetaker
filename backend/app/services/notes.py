@@ -88,7 +88,7 @@ def create_note(db: Session, data: NoteCreate) -> Note:
     return note
 
 
-def update_note(db: Session, note_id: int, data: NoteUpdate) -> Note:
+def update_note(db: Session, note_id: int, data: NoteUpdate, now: datetime | None = None) -> Note:
     note = _get_editable(db, note_id, data.version)
     fields = data.model_fields_set
     old_rule = (note.start_at, note.timezone, note.recurrence_freq)
@@ -101,6 +101,9 @@ def update_note(db: Session, note_id: int, data: NoteUpdate) -> Note:
     if "timezone" in fields and data.timezone is not None:
         note.timezone = data.timezone
     if "is_active" in fields and data.is_active is not None:
+        if data.is_active and not note.is_active:
+            # Активировали снова: напоминания со сроком раньше этого момента не досылаются
+            note.reminders_resume_at = now or utcnow()
         note.is_active = data.is_active
     if "tag_ids" in fields and data.tag_ids is not None:
         note.tags = _load_tags(db, data.tag_ids)
@@ -196,11 +199,13 @@ def trash_note(db: Session, note_id: int, version: int) -> Note:
     return note
 
 
-def restore_note(db: Session, note_id: int, version: int) -> Note:
+def restore_note(db: Session, note_id: int, version: int, now: datetime | None = None) -> Note:
     note = lock_note(db, note_id)
     check_version(note, version)
     if note.deleted_at is not None:
         note.deleted_at = None
+        # Возвращаются только напоминания, чей срок ещё не наступил
+        note.reminders_resume_at = now or utcnow()
         note.version += 1
         db.commit()
     return note

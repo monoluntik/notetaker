@@ -4,7 +4,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_db
+from app.api.deps import get_db, get_now
 from app.schemas import NoteCreate, NoteOut, NoteUpdate, Page, SortField, SortOrder
 from app.services import notes as svc
 from app.timeutil import ensure_aware
@@ -51,8 +51,8 @@ def get_note(note_id: int, db: Session = Depends(get_db)):
 
 
 @router.patch("/notes/{note_id}", response_model=NoteOut)
-def update_note(note_id: int, data: NoteUpdate, db: Session = Depends(get_db)):
-    return svc.update_note(db, note_id, data)
+def update_note(note_id: int, data: NoteUpdate, db: Session = Depends(get_db), now: datetime = Depends(get_now)):
+    return svc.update_note(db, note_id, data, now)
 
 
 Version = Annotated[int, Query(description="Версия заметки, известная клиенту; устаревшая → 409")]
@@ -65,8 +65,8 @@ def trash_note(note_id: int, version: Version, db: Session = Depends(get_db)):
 
 
 @router.post("/notes/{note_id}/restore", response_model=NoteOut)
-def restore_note(note_id: int, version: Version, db: Session = Depends(get_db)):
-    return svc.restore_note(db, note_id, version)
+def restore_note(note_id: int, version: Version, db: Session = Depends(get_db), now: datetime = Depends(get_now)):
+    return svc.restore_note(db, note_id, version, now)
 
 
 @router.delete("/notes/{note_id}/purge", status_code=status.HTTP_204_NO_CONTENT)
