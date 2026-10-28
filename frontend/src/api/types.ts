@@ -41,3 +41,26 @@ export interface NoteInput {
   tag_ids: number[]
   is_active: boolean
 }
+
+export interface Occurrence {
+  note_id: number
+  original_start: string
+  start_at: string
+  title: string
+  body: string
+  is_active: boolean
+  timezone: string
+  tags: Tag[]
+  is_recurring: boolean
+  is_exception: boolean
+}
+
+export interface Upcoming {
+  now: string
+  timezone: string
+  day_end: string
+  week_end: string
+  today: Occurrence[]
+  week: Occurrence[]
+  overdue: Occurrence[]
+}

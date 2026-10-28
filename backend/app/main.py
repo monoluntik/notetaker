@@ -4,10 +4,11 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from app.api import health, notes, settings as settings_api, tags
+from app.api import health, notes, occurrences, settings as settings_api, tags
 from app.config import Settings, get_settings
 from app.db import make_engine, make_sessionmaker
 from app.errors import DomainError
+from app.timeutil import utcnow
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -23,6 +24,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.settings = settings
     app.state.engine = engine
     app.state.sessionmaker = make_sessionmaker(engine)
+    app.state.clock = utcnow
 
     app.add_middleware(
         CORSMiddleware,
@@ -35,7 +37,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def domain_error_handler(_: Request, exc: DomainError):
         return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
 
-    for router in (health.router, tags.router, notes.router, settings_api.router):
+    for router in (health.router, tags.router, notes.router, occurrences.router, settings_api.router):
         app.include_router(router, prefix="/api")
     return app
 

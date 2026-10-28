@@ -141,3 +141,27 @@ class SettingsUpdate(BaseModel):
         if not EMAIL.match(v) or len(v) > 320:
             raise ValueError("некорректный email")
         return v
+
+
+# ---------- Occurrences / Upcoming ----------
+class OccurrenceOut(ORM):
+    note_id: int
+    original_start: UtcDatetime
+    start_at: UtcDatetime
+    title: str
+    body: str
+    is_active: bool
+    timezone: str
+    tags: list[TagOut]
+    is_recurring: bool
+    is_exception: bool
+
+
+class UpcomingOut(ORM):
+    now: UtcDatetime
+    timezone: str
+    day_end: UtcDatetime
+    week_end: UtcDatetime
+    today: list[OccurrenceOut]
+    week: list[OccurrenceOut]
+    overdue: list[OccurrenceOut]

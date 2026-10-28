@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query'
-import { NavLink, Navigate, Route, Routes } from 'react-router-dom'
+import { NavLink, Route, Routes } from 'react-router-dom'
 import { api } from './api/client'
 import { useUserTz } from './api/hooks'
 import { NoteEditorProvider } from './components/NoteEditor'
@@ -7,6 +7,7 @@ import { NotesPage } from './pages/NotesPage'
 import { SettingsPage } from './pages/SettingsPage'
 import { TagsPage } from './pages/TagsPage'
 import { TrashPage } from './pages/TrashPage'
+import { UpcomingPage } from './pages/UpcomingPage'
 
 function HealthBadge() {
   const { data, isError } = useQuery({
@@ -42,7 +43,7 @@ export default function App() {
             <Route path="/tags" element={<TagsPage />} />
             <Route path="/trash" element={<TrashPage />} />
             <Route path="/settings" element={<SettingsPage />} />
-            <Route path="/" element={<Navigate to="/notes" replace />} />
+            <Route path="/" element={<UpcomingPage />} />
             <Route path="*" element={<p>Раздел в разработке.</p>} />
           </Routes>
         </main>

@@ -59,3 +59,4 @@ button.chip { padding: .15rem .6rem; }
 .form label.row { flex-direction: row; }
 .form.narrow { max-width: 28rem; }
 .actions { display: flex; gap: .5rem; align-items: center; }
+.upcoming-section { margin-bottom: 1.5rem; } .upcoming-section h2 { margin-bottom: .5rem; }

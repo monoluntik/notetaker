@@ -43,3 +43,5 @@ cd frontend && npm run build                  # проверка типов + с
 | 2026-10-28 12:46 | Э2 | `pytest -q` | 16 passed (теги, заметки, корзина, настройки) |
 | 2026-10-28 12:46 | Э2 | `npm test` | 4 passed |
 | 2026-10-28 12:45 | Э2 | `npm run build` | OK |
+| 2026-10-28 12:47 | Э3 | `pytest -q -s` | 29 passed; perf 5000 заметок: max 0.015 с на запрос |
+| 2026-10-28 12:48 | Э3 | `npm test` / `npm run build` | 7 passed / OK |
