@@ -131,3 +131,18 @@ e2e `conflict.spec.ts` (2 сценария).
 эмуляция мобильных устройств в Chromium); реальные системные уведомления браузера и письма в
 интерфейсе Mailpit вручную не просматривались (в e2e уведомления подменены, письма — в логе
 backend); Firefox/Safari не проверялись.
+
+## Итерация 4 (слияние и подготовка к сдаче)
+| Время | Команда | Результат |
+|---|---|---|
+| 2026-10-28 17:45 | приёмка: `pytest -q` / `vitest` / build / eslint / `alembic check` / e2e | 112 / 23 / OK / OK / OK / 16 passed |
+| 17:52 | после `git merge` на master: то же + цикл миграций 0004↔0007 на тестовой БД | 112 / 23 / OK / OK / OK / 16 passed |
+| 18:21 | пробы требований PDF (не закоммичены) | 2 failed (напоминания после активации/восстановления), e2e 1 failed (повтор уведомления после перезагрузки) |
+| 18:27 | чистая копия: `docker compose -p notetaker-cleancheck … build --no-cache` и `up -d` | сборка 24 с, `0007 (head)`, `/api/health` ok |
+| 18:28 | на чистом стеке: email через Mailpit, следующий тик, два клиента | 1 письмо, после тика по-прежнему 1; A 200 / B 409 |
+| 18:32 | `pytest -q` | **117 passed** |
+| 18:32 | `alembic heads`, `alembic check` | `0007 (head)`, No new upgrade operations detected |
+| 18:33 | `npx vitest run` / `npm run build` / `npx eslint src e2e` | **25 passed** / OK / 0 проблем |
+| 18:33 | `npx playwright test` | **17 passed**, 1 письмо в логе |
+| 18:34 | `python scripts/restart_check.py` | RESULT: OK |
+| 18:32–18:34 | контрольная сумма основной БД до/после прогона | одинаковая (`4d7212b5…`) |

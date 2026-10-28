@@ -48,10 +48,17 @@ test('two tabs: data sync, one reminder shown in both tabs, single system notifi
   await tab1.waitForTimeout(1500) // даём второй вкладке шанс (ошибочно) показать уведомление
   expect((await notifCount(tab1)) + (await notifCount(tab2))).toBe(1)
 
-  await toast1.getByRole('button', { name: 'Прочитано' }).click()
-  await expect(toast2).toBeHidden()
+  // Требование: однажды показанное не всплывает снова после обновления страницы
+  await tab2.reload()
+  await expectOnline(tab2)
+  await tab2.waitForTimeout(1500)
+  await expect(toast2).toHaveCount(0)
+  expect(await notifCount(tab2)).toBe(0) // и системное уведомление после перезагрузки не повторяется
 
-  // Новая вкладка, открытая после прочтения, уведомление не показывает
+  await toast1.getByRole('button', { name: 'Прочитано' }).click()
+  await expect(toast1).toBeHidden()
+
+  // Новая вкладка, открытая после прочтения, уведомление не показывает (прочитано на сервере)
   const tab3 = await context.newPage()
   await tab3.goto('/notes')
   await expectOnline(tab3)
@@ -72,4 +79,21 @@ test('upcoming: a note moves to overdue without page reload', async ({ page, req
   await page.clock.fastForward('01:30') // клиентские часы +90 с; страница не перезагружается
   await expect(overdue.getByText('Скоро начнётся')).toBeVisible()
   await expect(today.getByText('Скоро начнётся')).toHaveCount(0)
+})
+
+test('calendar and upcoming in another tab update without reload', async ({ context, request }) => {
+  await request.patch('/api/settings', { data: { timezone: 'Asia/Almaty' } })
+  const tag = await (await request.post('/api/tags', { data: { name: 'e2e-sync-views' } })).json()
+  const cal = await context.newPage()
+  const up = await context.newPage()
+  const start = new Date(Date.now() + 3 * 3600e3)
+  const day = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Almaty' }).format(start) // yyyy-mm-dd
+  await cal.goto(`/calendar?view=day&date=${day}`)
+  await up.goto('/')
+  await expectOnline(cal)
+  await expectOnline(up)
+  // Изменение «из другого клиента» (через API) — обе вкладки обновляются по WebSocket
+  await request.post('/api/notes', { data: { title: 'Синхронизация видов', start_at: start.toISOString(), tag_ids: [tag.id] } })
+  await expect(cal.locator('.cal-item', { hasText: 'Синхронизация видов' })).toBeVisible()
+  await expect(up.getByText('Синхронизация видов')).toBeVisible()
 })

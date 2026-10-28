@@ -83,6 +83,9 @@ class Note(TimestampMixin, Base):
     # Правило повторения (DECISIONS D5). until — локальная дата в поясе заметки, включительно.
     recurrence_freq: Mapped[str] = mapped_column(String(10), nullable=False, server_default="none")
     recurrence_until: Mapped[date | None] = mapped_column(Date)
+    # Момент последней активации или восстановления из корзины: напоминания со сроком раньше
+    # не досылаются (DECISIONS D7, требование задания)
+    reminders_resume_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     # Номер версии для обнаружения одновременного редактирования (DECISIONS D14)
     version: Mapped[int] = mapped_column(Integer, nullable=False, server_default="1")
 
