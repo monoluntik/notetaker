@@ -158,6 +158,18 @@ trigram-индексы body 418 МБ и title 359 МБ.
 10 000 000 / 21 000 000 / 3 500 000 / 19 830).
 
 ## Как воспроизвести
-См. раздел «Нагрузочное тестирование» в README. Контейнер нагрузочной БД после тестов
-остановлен (`docker stop notetaker-loadtest`), том `notetaker-loadtest-pg` (~7.5 ГБ) сохранён; удалить:
+Только на отдельной БД (генератор очищает таблицы!):
+```bash
+docker run -d --name notetaker-loadtest -p 127.0.0.1:55432:5432 -e POSTGRES_USER=load \
+  -e POSTGRES_PASSWORD=load -e POSTGRES_DB=notetaker_load \
+  -v notetaker-loadtest-pg:/var/lib/postgresql/data --shm-size=4g postgres:16-alpine \
+  -c shared_buffers=8GB -c maintenance_work_mem=2GB -c max_wal_size=32GB
+(cd backend && NOTETAKER_DATABASE_URL=postgresql+psycopg://load:load@127.0.0.1:55432/notetaker_load ../.venv/bin/alembic upgrade head)
+docker exec -i notetaker-loadtest psql -U load -d notetaker_load -v n=100000   < scripts/loadtest/generate.sql   # пилот
+docker exec -i notetaker-loadtest psql -U load -d notetaker_load -v n=10000000 < scripts/loadtest/generate.sql   # ~21 мин
+.venv/bin/python scripts/loadtest/bench.py --db postgresql+psycopg://load:load@127.0.0.1:55432/notetaker_load
+```
+`bench.py` меняет нагрузочную БД (см. «Изменения нагрузочной БД во время измерений»).
+Контейнер нагрузочной БД после тестов остановлен (`docker stop notetaker-loadtest`), том
+`notetaker-loadtest-pg` (~7.5 ГБ) сохранён; удалить:
 `docker rm notetaker-loadtest && docker volume rm notetaker-loadtest-pg`.
