@@ -34,6 +34,10 @@ export const isEditConflict = (e: unknown) => isConflict(e) && /друг(ой|о
 export const isNetworkError = (e: unknown) => e instanceof ApiError && e.status === 0
 
 export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
+  return (await apiWithHeaders<T>(path, init)).data
+}
+
+export async function apiWithHeaders<T>(path: string, init: RequestInit = {}): Promise<{ data: T; headers: Headers }> {
   let res: Response
   try {
     res = await fetch(`/api${path}`, {
@@ -43,11 +47,11 @@ export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
   } catch {
     throw new ApiError(0, 'Нет связи с сервером. Изменения не сохранены — проверьте подключение и повторите.')
   }
-  if (res.status === 204) return undefined as T
+  if (res.status === 204) return { data: undefined as T, headers: res.headers }
   const body = await res.json().catch(() => null)
   if (!res.ok) {
     if (res.status >= 500 && !body?.detail) throw new ApiError(res.status, 'Сервер временно недоступен. Повторите попытку позже.')
     throw new ApiError(res.status, body?.detail ?? body)
   }
-  return body as T
+  return { data: body as T, headers: res.headers }
 }

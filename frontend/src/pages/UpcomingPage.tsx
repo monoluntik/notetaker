@@ -54,8 +54,8 @@ function Sections({ data, now, tz, overdueLimit, onMore }: { data: Upcoming; now
   return (
     <div className="upcoming-grid">
       <div className="stack" style={{ gap: 'var(--s5)' }}>
-        <Section title="Сегодня" items={s.today} tz={tz} timeOnly empty="На сегодня больше ничего не запланировано" />
-        <Section title="На этой неделе" items={s.week} tz={tz} empty="До конца недели заметок нет" />
+        <Section title="Сегодня" items={s.today} total={Math.max(s.today.length, data.today_total ?? 0)} tz={tz} timeOnly empty="На сегодня больше ничего не запланировано" />
+        <Section title="На этой неделе" items={s.week} total={Math.max(s.week.length, data.week_total ?? 0)} tz={tz} empty="До конца недели заметок нет" />
       </div>
       <div className="stack">
         <Section title="Прошедшие активные" items={s.overdue} total={s.overdueTotal} tz={tz} overdue
@@ -81,6 +81,9 @@ function Section({ title, items, total, tz, empty, timeOnly, hint, overdue }: {
     <section className={`card section-card ${overdue ? 'overdue' : ''}`} data-testid={`section-${title}`} aria-label={title}>
       <h2>{title} <span className="count">{total ?? items.length}</span></h2>
       {hint && <p className="muted xsmall">{hint}</p>}
+      {total !== undefined && total > items.length && !overdue && (
+        <p className="muted xsmall">Показаны первые {items.length} из {total}. Все — в календаре или в списке заметок.</p>
+      )}
       {items.length === 0 ? (
         <EmptyState icon={overdue ? 'check' : 'sun'} title={empty} />
       ) : (

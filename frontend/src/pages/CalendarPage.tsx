@@ -2,7 +2,7 @@ import { useQuery } from '@tanstack/react-query'
 import { DateTime } from 'luxon'
 import { type DragEvent, type ReactElement } from 'react'
 import { useSearchParams } from 'react-router-dom'
-import { api, isEditConflict } from '../api/client'
+import { apiWithHeaders, isEditConflict } from '../api/client'
 import { keys, useInvalidateAll, useUpdateNote, useUpdateOccurrence, useUserTz } from '../api/hooks'
 import type { Occurrence } from '../api/types'
 import { useOpenEditor } from '../components/NoteEditor'
@@ -33,11 +33,15 @@ export function CalendarPage() {
   const moveNote = useUpdateNote()
   const moveOcc = useUpdateOccurrence()
 
-  const { data: occs = [], isLoading, isFetching, error, refetch } = useQuery({
+  const { data, isLoading, isFetching, error, refetch } = useQuery({
     queryKey: [...keys.notes, 'occurrences', range.from, range.to],
-    queryFn: () => api<Occurrence[]>(`/occurrences?from=${encodeURIComponent(range.from)}&to=${encodeURIComponent(range.to)}`),
+    queryFn: async () => {
+      const r = await apiWithHeaders<Occurrence[]>(`/occurrences?from=${encodeURIComponent(range.from)}&to=${encodeURIComponent(range.to)}`)
+      return { items: r.data, truncated: r.headers.get('X-Truncated') === 'true', total: Number(r.headers.get('X-Total-Count') ?? 0) }
+    },
     placeholderData: (prev) => prev,
   })
+  const occs = data?.items ?? []
   const byDay = groupByLocalDate(occs, tz)
 
   const go = (patch: { view?: View; date?: string }) =>
@@ -106,6 +110,13 @@ export function CalendarPage() {
       </div>
       {!isMobile && <p className="cal-hint">Нажмите на заметку, чтобы открыть; перетащите её на другой день, чтобы перенести. Клик по пустому месту — новая заметка.</p>}
       {error && <div className="card"><ErrorState error={error} onRetry={() => refetch()} /></div>}
+      {data?.truncated && (
+        <div className="banner banner-warn" role="status">
+          <Icon name="info" />
+          <div>В этом периоде {data.total ? `${data.total} вхождений` : 'слишком много вхождений'} — показаны первые {occs.length}.
+            Переключитесь на неделю или день, чтобы увидеть все.</div>
+        </div>
+      )}
 
       {isMobile ? (
         <MobileCalendar view={view} anchor={anchor} today={today} days={range.days.map((d) => d.toISODate()!)} byDay={byDay} anchorMonth={anchorMonth}

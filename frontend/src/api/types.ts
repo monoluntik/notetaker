@@ -87,6 +87,8 @@ export interface Upcoming {
   week: Occurrence[]
   overdue: Occurrence[]
   overdue_total: number
+  today_total: number
+  week_total: number
 }
 
 export interface AppNotification {

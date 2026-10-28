@@ -1,6 +1,6 @@
 from datetime import datetime, timedelta
 
-from sqlalchemy import Date, DateTime, Select, and_, cast, delete, func, literal, or_, select
+from sqlalchemy import Date, DateTime, Select, and_, cast, delete, func, literal, or_, select, union
 from sqlalchemy.orm import Session
 
 from app.errors import Conflict, Invalid, NotFound
@@ -243,21 +243,22 @@ def build_list_query(
     stmt = select(Note).where(Note.deleted_at.is_not(None) if deleted else Note.deleted_at.is_(None))
     if q and q.strip():
         pattern = f"%{_escape_like(q.strip())}%"
-        # Серия находится и по изменённому заголовку/тексту отдельного (не удалённого) вхождения
-        in_occurrence = select(OccurrenceOverride.note_id).where(
-            OccurrenceOverride.is_cancelled.is_(False),
-            or_(
-                OccurrenceOverride.title.ilike(pattern, escape="\\"),
-                OccurrenceOverride.body.ilike(pattern, escape="\\"),
+        # Серия находится и по изменённому заголовку/тексту отдельного (не удалённого) вхождения.
+        # Объединение (UNION) трёх поисков, а не OR: с OR и подзапросом PostgreSQL не может
+        # использовать trigram-индексы и перебирает всю таблицу (EXPLAIN: 78 мс → 1.2 мс на 100k,
+        # см. docs/LOADTEST.md).
+        matching = union(
+            select(Note.id).where(Note.title.ilike(pattern, escape="\\")),
+            select(Note.id).where(Note.body.ilike(pattern, escape="\\")),
+            select(OccurrenceOverride.note_id).where(
+                OccurrenceOverride.is_cancelled.is_(False),
+                or_(
+                    OccurrenceOverride.title.ilike(pattern, escape="\\"),
+                    OccurrenceOverride.body.ilike(pattern, escape="\\"),
+                ),
             ),
         )
-        stmt = stmt.where(
-            or_(
-                Note.title.ilike(pattern, escape="\\"),
-                Note.body.ilike(pattern, escape="\\"),
-                Note.id.in_(in_occurrence),
-            )
-        )
+        stmt = stmt.where(Note.id.in_(matching))
     if tag_ids:
         # «любой из выбранных тегов»
         stmt = stmt.where(Note.id.in_(select(note_tags.c.note_id).where(note_tags.c.tag_id.in_(tag_ids))))

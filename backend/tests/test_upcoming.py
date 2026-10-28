@@ -82,11 +82,12 @@ def test_overdue_has_no_hidden_cutoff(client, at):
     s = make_note(client, [t["id"]], title="old-series", start_at="2026-06-01T10:00:00Z", timezone="UTC",
                   recurrence={"freq": "monthly", "until": "2026-08-31"})
     d = client.get("/api/upcoming").json()
-    assert [o["title"] for o in d["overdue"]] == ["3-months", "old-series", "old-series", "old-series", "year-ago"]
+    # 1 августа 10:00 — и «3-months», и вхождение серии; при равном времени порядок по note_id (D10)
+    assert [o["title"] for o in d["overdue"]] == ["old-series", "3-months", "old-series", "old-series", "year-ago"]
     assert d["overdue_total"] == 5
 
     d = client.get("/api/upcoming", params={"overdue_limit": 2}).json()
-    assert [o["title"] for o in d["overdue"]] == ["3-months", "old-series"] and d["overdue_total"] == 5
+    assert [o["title"] for o in d["overdue"]] == ["old-series", "3-months"] and d["overdue_total"] == 5
     assert client.get("/api/upcoming", params={"overdue_limit": 0}).status_code == 422
 
     client.patch(f"/api/notes/{s['id']}", json={"is_active": False})  # неактивная серия уходит
@@ -112,3 +113,32 @@ def test_overdue_performance(client, engine, at):
     print("upcoming with 5000 past notes + 2-year daily series:", round(elapsed, 3), "s")
     assert d["overdue_total"] == 5000 + 673 and len(d["overdue"]) == 50
     assert elapsed < 2.0
+
+
+def test_calendar_window_is_capped_with_honest_total(client):
+    t = make_tag(client)
+    make_note(client, [t["id"]], title="daily", start_at="2026-11-01T08:00:00Z", timezone="UTC",
+              recurrence={"freq": "daily", "until": "2026-11-30"})
+    for i in range(5):
+        make_note(client, [t["id"]], title=f"n{i}", start_at=f"2026-11-0{i + 1}T09:00:00Z")
+    r = client.get("/api/occurrences", params={"from": "2026-11-01T00:00:00Z", "to": "2026-12-01T00:00:00Z", "limit": 10})
+    assert r.status_code == 200 and len(r.json()) == 10
+    assert r.headers["X-Truncated"] == "true" and r.headers["X-Total-Count"] == "35"
+    r = client.get("/api/occurrences", params={"from": "2026-11-01T00:00:00Z", "to": "2026-12-01T00:00:00Z"})
+    assert len(r.json()) == 35 and "X-Truncated" not in r.headers
+
+
+def test_upcoming_sections_are_capped_with_exact_totals(client, at):
+    import app.services.upcoming as up
+    t = make_tag(client)
+    at("2026-11-04T07:00:00Z")
+    for i in range(8):
+        make_note(client, [t["id"]], title=f"today{i}", start_at=f"2026-11-04T1{i}:00:00Z")
+    old = up.SECTION_LIMIT
+    up.SECTION_LIMIT = 3
+    try:
+        d = client.get("/api/upcoming").json()
+    finally:
+        up.SECTION_LIMIT = old
+    assert [o["title"] for o in d["today"]] == ["today0", "today1", "today2"] and d["today_total"] == 8
+    assert d["week_total"] == 0

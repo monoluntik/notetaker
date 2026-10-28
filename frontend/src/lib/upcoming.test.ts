@@ -16,6 +16,8 @@ const data: Upcoming = {
   week: [occ('friday', '2026-11-06T10:00:00Z')],
   overdue: [occ('yesterday', '2026-11-03T10:00:00Z')],
   overdue_total: 120, // сервер вернул 1 из 120
+  today_total: 2,
+  week_total: 1,
 }
 
 const names = (s: Occurrence[]) => s.map((o) => o.title)
