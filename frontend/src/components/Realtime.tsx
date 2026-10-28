@@ -3,7 +3,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { api } from '../api/client'
 import { keys, useUserTz } from '../api/hooks'
 import type { AppNotification } from '../api/types'
-import { claimOnce, pruneClaims, showSystemNotification } from '../lib/notify'
+import { electLeader, pruneClaims, shouldShowSystemNotification, showSystemNotification } from '../lib/notify'
 import { formatDateTime } from '../lib/time'
 import { useOpenEditor } from './NoteEditor'
 
@@ -28,7 +28,8 @@ export function Realtime() {
   }, [])
 
   useEffect(() => {
-    pruneClaims()
+    try { pruneClaims() } catch { /* localStorage может быть недоступен */ }
+    const leadership = electLeader()
     let ws: WebSocket | null = null
     let retry = 0
     let timer: ReturnType<typeof setTimeout> | undefined
@@ -53,9 +54,10 @@ export function Realtime() {
         } else if (msg.type === 'reminder') {
           const n = msg.notification as AppNotification
           add([n])
-          claimOnce(n.id).then((mine) => {
-            if (mine) showSystemNotification(n.id, `Напоминание: ${n.title}`, OFFSET_TEXT[n.offset_minutes] ?? '')
-          })
+          // Системное уведомление — только во вкладке-лидере (одно на все вкладки)
+          if (shouldShowSystemNotification(n.id, leadership)) {
+            showSystemNotification(n.id, `Напоминание: ${n.title}`, OFFSET_TEXT[n.offset_minutes] ?? '')
+          }
         } else if (msg.type === 'notifications_read') {
           const ids = new Set<number>(msg.ids)
           setItems((prev) => prev.filter((p) => !ids.has(p.id)))
@@ -70,6 +72,7 @@ export function Realtime() {
     connect()
     return () => {
       stopped = true
+      leadership.release()
       clearTimeout(timer)
       ws?.close()
     }

@@ -268,3 +268,16 @@ def test_two_tabs_receive_same_notification_and_read_state_syncs(client, app, ta
         client.post("/api/tags", json={"name": "new"})
         assert tab1.receive_json()["type"] == "changed" and tab2.receive_json()["type"] == "changed"
     assert len(emails(app)) == 1
+
+
+def test_reminder_already_due_at_creation_is_sent_immediately_not_late(client, app, engine, tag):
+    """Заметка через 5 минут с напоминанием «за 10 минут»: событие ещё не началось → напоминание сразу."""
+    from datetime import timedelta
+    from app.timeutil import utcnow
+    start = (utcnow() + timedelta(minutes=5)).replace(microsecond=0)
+    make_note(client, [tag["id"]], start_at=start.isoformat(), reminders=[10])
+    now = utcnow().replace(tzinfo=None).isoformat()
+    scan(app, now)
+    deliver(app, now)
+    assert [(r["status"], r["late"]) for r in rows(engine)] == [("sent", False)]
+    assert not emails(app)[0].subject.startswith("[с опозданием]")

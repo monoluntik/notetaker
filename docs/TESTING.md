@@ -12,6 +12,7 @@ cd backend && ../.venv/bin/pytest -q          # backend
 cd frontend && npm test                       # vitest
 cd frontend && npm run build                  # проверка типов + сборка
 cd frontend && npm run e2e                    # Playwright: сам поднимает backend :8011 (БД notetaker_e2e) и Vite :5174
+.venv/bin/python scripts/restart_check.py     # SIGKILL/рестарт реального процесса + SMTP-приёмник
 ```
 
 ## План тестирования
@@ -53,3 +54,21 @@ cd frontend && npm run e2e                    # Playwright: сам подним�
 | 2026-10-28 13:16 | Э6 | `pytest -q` ×3 | 70 passed каждый раз (16 тестов напоминаний/WS) |
 | 2026-10-28 13:17 | Э6 | `npm test` / `npm run build` / `eslint` | 16 passed / OK / 0 проблем |
 | 2026-10-28 13:17 | Э6 | `npm run e2e` | 4 passed; в логе backend ровно 1 письмо `EMAIL to=me@example.com … Напомни мне` при 3 вкладках |
+| 2026-10-28 13:20 | Э7 | `python scripts/restart_check.py` | RESULT: OK — после SIGKILL и двух рестартов 2 письма через SMTP, `(10,'sent',1)`, `(60,'sent',1)`, данные на месте (лог ниже) |
+| 2026-10-28 13:20 | Э7 | `pytest -q` | 71 passed |
+| 2026-10-28 13:21 | Э7 | `npm run e2e` | 3 passed / 2 failed: (а) 2 системных уведомления на 2 вкладки — дефект, исправлен; (б) «Сохранено» не видно — дефект UI, исправлен |
+| 2026-10-28 13:23 | Э7 | `npm run e2e` ×3 | 5 passed каждый раз; по 1 письму на прогон |
+| 2026-10-28 13:22 | Э7 | `npm test` | 17 passed |
+
+Вывод `scripts/restart_check.py` (13:20):
+```
+[13:20:00] backend started pid=764096
+[13:20:03] emails before kill: ['Напоминание: Restart demo — 28.10.2026 12:30']
+[13:20:03] backend killed with SIGKILL; waiting 8 s (10-minute reminder fires during downtime)
+[13:20:11] backend restarted pid=764285
+[13:20:14] note after restart: title='Restart demo' reminders=[10, 60]
+[13:20:14] emails after restart: ['Напоминание: Restart demo — 28.10.2026 12:30', 'Напоминание: Restart demo — 28.10.2026 12:30']
+[13:20:18] emails after second restart: [... те же 2 письма ...]
+[13:20:18] deliveries: [(10, 'sent', 1), (60, 'sent', 1)]
+[13:20:18] RESULT: OK
+```

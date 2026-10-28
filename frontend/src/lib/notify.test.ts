@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { claimOnce, pruneClaims } from './notify'
+import { claimOnceFallback, electLeader, pruneClaims } from './notify'
 
 class MemStorage implements Storage {
   private m = new Map<string, string>()
@@ -10,38 +10,51 @@ class MemStorage implements Storage {
   removeItem(k: string) { this.m.delete(k) }
   setItem(k: string, v: string) { this.m.set(k, v) }
 }
-// Хранилище общее для «вкладок» в рамках теста (как localStorage одного origin)
-const localStorage = new MemStorage()
 
-describe('claimOnce', () => {
-  it('only the first of several concurrent tabs gets to show the notification', async () => {
-    localStorage.clear()
-    // Без Web Locks (jsdom) — проверяем саму логику метки
-    const results = await Promise.all([1, 2, 3].map(() => claimOnce(42, localStorage, undefined)))
-    expect(results.filter(Boolean)).toHaveLength(1)
-    expect(await claimOnce(43, localStorage, undefined)).toBe(true)
+/** Упрощённый LockManager: эксклюзивная блокировка с очередью, как в браузере. */
+function fakeLocks(): LockManager {
+  let tail: Promise<unknown> = Promise.resolve()
+  return {
+    request: (_name: string, cb: () => Promise<unknown>) => {
+      const run = tail.then(() => cb())
+      tail = run.catch(() => {})
+      return run
+    },
+  } as unknown as LockManager
+}
+
+const tick = () => new Promise((r) => setTimeout(r, 0))
+
+describe('leader election across tabs', () => {
+  it('exactly one tab is leader; leadership passes on when the leader closes', async () => {
+    const locks = fakeLocks()
+    const tabs = [electLeader(locks), electLeader(locks), electLeader(locks)]
+    await tick()
+    expect(tabs.map((t) => t.isLeader())).toEqual([true, false, false])
+
+    tabs[0].release() // первая вкладка закрыта
+    await tick()
+    await tick()
+    expect(tabs.map((t) => t.isLeader())).toEqual([false, true, false])
   })
 
-  it('serialises through Web Locks when available', async () => {
-    localStorage.clear()
-    let chain = Promise.resolve<unknown>(undefined)
-    const fakeLocks = {
-      request: (_name: string, cb: () => Promise<boolean>) => {
-        const p = chain.then(cb)
-        chain = p
-        return p
-      },
-    } as unknown as LockManager
-    const results = await Promise.all([claimOnce(7, localStorage, fakeLocks), claimOnce(7, localStorage, fakeLocks)])
-    expect(results).toEqual([true, false])
+  it('without Web Locks nobody is leader (fallback is used instead)', () => {
+    expect(electLeader(undefined).isLeader()).toBe(false)
+  })
+})
+
+describe('fallback claim and pruning', () => {
+  it('claims an id once', () => {
+    const s = new MemStorage()
+    expect([claimOnceFallback(1, s), claimOnceFallback(1, s), claimOnceFallback(2, s)]).toEqual([true, false, true])
   })
 
   it('prunes old claims', () => {
-    localStorage.clear()
-    localStorage.setItem('notetaker:notified:1', String(Date.now() - 10 * 24 * 3600_000))
-    localStorage.setItem('notetaker:notified:2', String(Date.now()))
-    pruneClaims(localStorage)
-    expect(localStorage.getItem('notetaker:notified:1')).toBeNull()
-    expect(localStorage.getItem('notetaker:notified:2')).not.toBeNull()
+    const s = new MemStorage()
+    s.setItem('notetaker:notified:1', String(Date.now() - 10 * 24 * 3600_000))
+    s.setItem('notetaker:notified:2', String(Date.now()))
+    pruneClaims(s)
+    expect(s.getItem('notetaker:notified:1')).toBeNull()
+    expect(s.getItem('notetaker:notified:2')).not.toBeNull()
   })
 })

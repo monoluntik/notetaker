@@ -6,7 +6,9 @@ import type { UserSettings } from '../api/types'
 
 export function SettingsPage() {
   const { data } = useSettings()
-  return data ? <SettingsForm key={JSON.stringify(data)} initial={data} /> : <p>Загрузка…</p>
+  // Форма создаётся один раз после загрузки: иначе после сохранения она пересоздавалась бы
+  // и сообщение «Сохранено» пропадало (найдено e2e-тестом).
+  return data ? <SettingsForm initial={data} /> : <p>Загрузка…</p>
 }
 
 function SettingsForm({ initial }: { initial: UserSettings }) {

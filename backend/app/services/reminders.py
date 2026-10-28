@@ -54,16 +54,17 @@ def scan(db: Session, now: datetime) -> ScanResult:
 
     email = get_settings_row(db).email
     notes_with_reminders = {
-        n.id: n.reminders for n in db.scalars(select(Note).where(Note.reminder_rules.any(), Note.deleted_at.is_(None)))
+        n.id: (n.reminders, n.updated_at)
+        for n in db.scalars(select(Note).where(Note.reminder_rules.any(), Note.deleted_at.is_(None)))
     }
     created: list[ReminderDelivery] = []
     missed = 0
     if notes_with_reminders:
         # Вхождения, которые ещё не начались к прошлому скану и начнутся не позже чем через сутки
         for occ in occurrences_between(db, watermark, now + MAX_OFFSET + timedelta(seconds=1)):
-            offsets = notes_with_reminders.get(occ.note_id)
-            if not offsets or not occ.is_active:
+            if occ.note_id not in notes_with_reminders or not occ.is_active:
                 continue
+            offsets, note_updated_at = notes_with_reminders[occ.note_id]
             for offset in offsets:
                 fire_at = occ.start_at - timedelta(minutes=offset)
                 if fire_at > now:
@@ -80,7 +81,9 @@ def scan(db: Session, now: datetime) -> ScanResult:
                         occurrence_start=occ.start_at,
                         title=occ.title,
                         status=status,
-                        late=now - fire_at > LATE_THRESHOLD,
+                        # «С опозданием» — только если задержка вызвана простоем, а не тем, что
+                        # заметку создали/изменили уже после момента напоминания.
+                        late=now - fire_at > LATE_THRESHOLD and fire_at > note_updated_at,
                         email_to=email if status == "pending" else None,
                     )
                     .on_conflict_do_nothing(constraint="uq_reminder_event")
