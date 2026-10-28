@@ -40,3 +40,6 @@ cd frontend && npm run build                  # проверка типов + с
 | 2026-10-28 12:31 | Э1 | `npm run build` | OK (после добавления `@types/node`) |
 | 2026-10-28 12:31 | Э1 | `docker compose config -q` | OK; `docker compose up` не проверен — нет доступа к Docker |
 | 2026-10-28 12:31 | Э1 | `curl :5173/api/health` (Vite → FastAPI → PG) | `{"status":"ok","database":"ok"}` |
+| 2026-10-28 12:46 | Э2 | `pytest -q` | 16 passed (теги, заметки, корзина, настройки) |
+| 2026-10-28 12:46 | Э2 | `npm test` | 4 passed |
+| 2026-10-28 12:45 | Э2 | `npm run build` | OK |

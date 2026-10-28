@@ -10,7 +10,8 @@ class Base(DeclarativeBase):
 
 
 def make_engine(url: str) -> Engine:
-    return create_engine(url, pool_pre_ping=True, future=True)
+    # Сессии БД всегда в UTC: результат не зависит от часового пояса сервера PostgreSQL.
+    return create_engine(url, pool_pre_ping=True, future=True, connect_args={"options": "-c timezone=UTC"})
 
 
 def make_sessionmaker(engine: Engine) -> sessionmaker[Session]:

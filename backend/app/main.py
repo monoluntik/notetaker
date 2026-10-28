@@ -1,11 +1,13 @@
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
-from app.api import health
+from app.api import health, notes, settings as settings_api, tags
 from app.config import Settings, get_settings
 from app.db import make_engine, make_sessionmaker
+from app.errors import DomainError
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -28,7 +30,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
-    app.include_router(health.router, prefix="/api")
+
+    @app.exception_handler(DomainError)
+    async def domain_error_handler(_: Request, exc: DomainError):
+        return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
+
+    for router in (health.router, tags.router, notes.router, settings_api.router):
+        app.include_router(router, prefix="/api")
     return app
 
 
