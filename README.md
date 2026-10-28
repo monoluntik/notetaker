@@ -68,7 +68,7 @@ npm run dev                                 # http://localhost:5173 (прокс�
 ## Тесты
 ```bash
 scripts/dev-db.sh start
-cd backend && ../.venv/bin/pytest -q           # 110 тестов на реальном PostgreSQL
+cd backend && ../.venv/bin/pytest -q           # 112 тестов на реальном PostgreSQL
 cd frontend && npm test && npm run build       # vitest (23) + проверка типов и сборка
 cd frontend && npm run e2e                     # Playwright (16 сценариев), сам поднимает backend и Vite
 .venv/bin/python scripts/restart_check.py      # SIGKILL/рестарт реального процесса + SMTP-приёмник
@@ -96,7 +96,7 @@ backend/
   app/services/     бизнес-логика: notes, tags, recurrence, occurrences, upcoming, reminders, scheduler
   app/models.py     SQLAlchemy-модели;  app/schemas.py — Pydantic-схемы и валидация
   app/email.py      адаптеры email;  app/realtime.py — WebSocket-хаб
-  alembic/versions/ миграции 0001–0005
+  alembic/versions/ миграции 0001–0006
   tests/            pytest
 frontend/
   src/api/          клиент, типы, хуки TanStack Query
