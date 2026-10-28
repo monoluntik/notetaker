@@ -9,7 +9,9 @@ test('create tag and note via UI, find it, see it in calendar, move it by drag a
   await page.goto('/tags')
   await page.getByPlaceholder('Название тега').fill('Работа')
   await page.getByRole('button', { name: 'Добавить' }).click()
-  await expect(page.getByRole('textbox', { name: 'Название' })).toHaveValue('Работа')
+  // В общей e2e-БД могут быть теги из других тестов — ищем среди всех полей названия
+  await expect.poll(() => page.getByRole('textbox', { name: 'Название' })
+    .evaluateAll((els) => els.map((e) => (e as HTMLInputElement).value))).toContain('Работа')
 
   await page.goto('/notes')
   await page.getByRole('button', { name: '+ Новая заметка' }).click()

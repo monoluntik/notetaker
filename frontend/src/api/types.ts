@@ -21,6 +21,7 @@ export interface Note {
   tags: Tag[]
   recurrence: Recurrence | null
   reminders: number[]
+  version: number
 }
 
 export type Freq = 'daily' | 'weekly' | 'monthly'
@@ -52,6 +53,7 @@ export interface NoteInput {
   is_active: boolean
   recurrence: Recurrence | null
   reminders: number[]
+  version?: number
 }
 
 export interface OccurrenceInput {
@@ -59,6 +61,7 @@ export interface OccurrenceInput {
   body?: string
   start_at?: string
   is_active?: boolean
+  version?: number
 }
 
 export interface Occurrence {

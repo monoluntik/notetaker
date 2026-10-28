@@ -133,3 +133,52 @@ def test_trash_autopurge_respects_configured_retention(engine, settings):
         c.portal.call(app.state.scheduler.tick)
         assert c.get("/api/trash").json()["total"] == 0
         assert c.get("/api/settings").json()["trash_retention_days"] == 7
+
+
+def test_concurrent_edit_with_stale_version_is_rejected(client):
+    t = make_tag(client)
+    n = make_note(client, [t["id"]], title="v1")
+    assert n["version"] == 1
+    a = client.patch(f"/api/notes/{n['id']}", json={"title": "из вкладки A", "version": 1})
+    assert a.status_code == 200 and a.json()["version"] == 2
+    b = client.patch(f"/api/notes/{n['id']}", json={"title": "из вкладки B", "version": 1})
+    assert b.status_code == 409 and "другой вкладке" in b.json()["detail"]
+    assert client.get(f"/api/notes/{n['id']}").json()["title"] == "из вкладки A"  # правка A не потеряна
+    assert client.patch(f"/api/notes/{n['id']}", json={"title": "B после обновления", "version": 2}).status_code == 200
+    # Без версии (перетаскивание в календаре, старые клиенты) — правка проходит
+    assert client.patch(f"/api/notes/{n['id']}", json={"is_active": False}).json()["version"] == 4
+
+
+def test_simultaneous_edits_exactly_one_wins(app, client):
+    import threading
+    from fastapi.testclient import TestClient
+    t = make_tag(client)
+    n = make_note(client, [t["id"]])
+    barrier = threading.Barrier(6)
+    codes = []
+
+    def worker(i):
+        with TestClient(app) as c:
+            barrier.wait()
+            codes.append(c.patch(f"/api/notes/{n['id']}", json={"title": f"tab {i}", "version": 1}).status_code)
+
+    threads = [threading.Thread(target=worker, args=(i,)) for i in range(6)]
+    [th.start() for th in threads]
+    [th.join() for th in threads]
+    assert sorted(codes) == [200, 409, 409, 409, 409, 409]
+    assert client.get(f"/api/notes/{n['id']}").json()["version"] == 2
+
+
+def test_version_changes_on_trash_restore_and_occurrence_edits(client):
+    t = make_tag(client)
+    s = make_note(client, [t["id"]], start_at="2026-11-01T09:00:00Z", timezone="UTC",
+                  recurrence={"freq": "daily", "until": "2026-11-05"})
+    url = f"/api/notes/{s['id']}/occurrences/2026-11-02T09:00:00Z"
+    assert client.patch(url, json={"title": "A", "version": 1}).status_code == 200
+    r = client.patch(url, json={"title": "B", "version": 1})  # вторая вкладка открыла вхождение раньше
+    assert r.status_code == 409
+    assert client.patch(f"/api/notes/{s['id']}", json={"title": "x", "version": 1}).status_code == 409
+    v = client.get(f"/api/notes/{s['id']}").json()["version"]
+    client.delete(f"/api/notes/{s['id']}")
+    client.post(f"/api/notes/{s['id']}/restore")
+    assert client.get(f"/api/notes/{s['id']}").json()["version"] == v + 2

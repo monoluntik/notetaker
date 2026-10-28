@@ -40,10 +40,30 @@ def get_note(db: Session, note_id: int, *, include_deleted: bool = True) -> Note
     return note
 
 
-def _get_editable(db: Session, note_id: int) -> Note:
-    note = get_note(db, note_id)
+EDIT_CONFLICT = (
+    "Заметку уже изменили в другой вкладке или на другом устройстве. "
+    "Загрузите актуальную версию и повторите изменения."
+)
+
+
+def lock_note(db: Session, note_id: int) -> Note:
+    """Заметка с блокировкой строки до конца транзакции: правки одной заметки идут по очереди."""
+    note = db.get(Note, note_id, with_for_update=True, populate_existing=True)
+    if note is None:
+        raise NotFound(f"Заметка {note_id} не найдена")
+    return note
+
+
+def check_version(note: Note, expected: int | None) -> None:
+    if expected is not None and expected != note.version:
+        raise Conflict(EDIT_CONFLICT)
+
+
+def _get_editable(db: Session, note_id: int, expected_version: int | None = None) -> Note:
+    note = lock_note(db, note_id)
     if note.deleted_at is not None:
         raise Conflict("Заметка в корзине: сначала восстановите её")
+    check_version(note, expected_version)
     return note
 
 
@@ -68,7 +88,7 @@ def create_note(db: Session, data: NoteCreate) -> Note:
 
 
 def update_note(db: Session, note_id: int, data: NoteUpdate) -> Note:
-    note = _get_editable(db, note_id)
+    note = _get_editable(db, note_id, data.version)
     fields = data.model_fields_set
     old_rule = (note.start_at, note.timezone, note.recurrence_freq)
     if "title" in fields and data.title is not None:
@@ -98,23 +118,26 @@ def update_note(db: Session, note_id: int, data: NoteUpdate) -> Note:
     if (note.start_at, note.timezone, note.recurrence_freq) != old_rule:
         note.overrides.clear()
     note.updated_at = func.now()  # теги меняют только связь, поэтому время обновляем явно
+    note.version += 1
     db.commit()
     db.refresh(note)
     return note
 
 
 def trash_note(db: Session, note_id: int) -> Note:
-    note = get_note(db, note_id)
+    note = lock_note(db, note_id)
     if note.deleted_at is None:
         note.deleted_at = utcnow()
+        note.version += 1
         db.commit()
     return note
 
 
 def restore_note(db: Session, note_id: int) -> Note:
-    note = get_note(db, note_id)
+    note = lock_note(db, note_id)
     if note.deleted_at is not None:
         note.deleted_at = None
+        note.version += 1
         db.commit()
     return note
 

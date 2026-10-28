@@ -113,6 +113,8 @@ class NoteUpdate(BaseModel):
     is_active: bool | None = None
     recurrence: Recurrence | None = None  # явный null — отменить повторение
     reminders: Reminders | None = None
+    # Версия, с которой клиент начал редактирование. Если заметку уже изменили — 409 (D14).
+    version: int | None = None
 
 
 class NoteOut(ORM):
@@ -128,6 +130,7 @@ class NoteOut(ORM):
     tags: list[TagOut]
     recurrence: Recurrence | None
     reminders: list[int]
+    version: int
 
 
 class Page[T](BaseModel):
@@ -197,6 +200,7 @@ class OccurrenceUpdate(BaseModel):
     body: Annotated[str, Field(max_length=20000)] | None = None
     start_at: AwareDatetime | None = None
     is_active: bool | None = None
+    version: int | None = None  # версия серии, см. NoteUpdate.version
 
 
 class NotificationOut(ORM):

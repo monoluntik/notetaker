@@ -320,3 +320,21 @@ def test_pending_email_still_sent_after_unrelated_edit(client, app, engine, tag)
     client.patch(f"/api/notes/{n['id']}", json={"body": "уточнение"})
     deliver(app, "2026-11-04T09:51:00")
     assert len(emails(app)) == 1 and rows(engine)[0]["status"] == "sent"
+
+
+def test_restored_note_resumes_reminders(client, app, tag):
+    n = make_note(client, [tag["id"]], start_at="2026-11-04T10:00:00Z", reminders=[10, 60])
+    scan(app, "2026-11-04T08:00:00")
+    client.delete(f"/api/notes/{n['id']}")
+    assert scan(app, "2026-11-04T09:00:00").created == []  # в корзине — нет напоминаний
+    client.post(f"/api/notes/{n['id']}/restore")
+    # часовое наступило, пока заметка была в корзине, но событие ещё впереди → отправляется (D7)
+    assert sorted(c.offset_minutes for c in scan(app, "2026-11-04T09:50:00").created) == [10, 60]
+
+
+def test_reactivated_note_gets_reminders(client, app, tag):
+    n = make_note(client, [tag["id"]], start_at="2026-11-04T10:00:00Z", reminders=[10], is_active=False)
+    scan(app, "2026-11-04T08:00:00")
+    assert scan(app, "2026-11-04T09:50:00").created == []
+    client.patch(f"/api/notes/{n['id']}", json={"is_active": True})
+    assert len(scan(app, "2026-11-04T09:51:00").created) == 1

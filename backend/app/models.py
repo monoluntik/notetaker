@@ -79,6 +79,8 @@ class Note(TimestampMixin, Base):
     # Правило повторения (DECISIONS D5). until — локальная дата в поясе заметки, включительно.
     recurrence_freq: Mapped[str] = mapped_column(String(10), nullable=False, server_default="none")
     recurrence_until: Mapped[date | None] = mapped_column(Date)
+    # Номер версии для обнаружения одновременного редактирования (DECISIONS D14)
+    version: Mapped[int] = mapped_column(Integer, nullable=False, server_default="1")
 
     tags: Mapped[list[Tag]] = relationship(secondary=note_tags, lazy="selectin", order_by=Tag.name)
     reminder_rules: Mapped[list["NoteReminder"]] = relationship(
