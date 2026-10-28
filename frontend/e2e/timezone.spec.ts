@@ -8,16 +8,17 @@ test('changing user timezone changes displayed time but not the stored instant',
   } })).json()
 
   await page.goto('/notes?q=Полночь')
-  await expect(page.locator('.note-row')).toContainText('21 нояб. 2026, 04:30') // UTC+5 — уже следующий день
+  await expect(page.getByRole('button', { name: /Полночь UTC, 21 ноября 2026, 04:30/ })).toBeVisible() // UTC+5 — уже следующий день
 
   await page.goto('/settings')
-  await page.getByLabel('Часовой пояс').selectOption('America/New_York')
+  await page.getByRole('combobox', { name: 'Часовой пояс' }).fill('America/New_York')
+  await expect(page.getByText(/Сейчас в этом поясе/)).toContainText('UTC-')
   await page.getByRole('button', { name: 'Сохранить' }).click()
   await expect(page.getByText('Сохранено', { exact: true })).toBeVisible()
-  await expect(page.locator('.topbar')).toContainText('America/New_York')
+  await expect(page.locator('.sidebar')).toContainText('America/New_York')
 
   await page.goto('/notes?q=Полночь')
-  await expect(page.locator('.note-row')).toContainText('20 нояб. 2026, 18:30') // UTC-5
+  await expect(page.getByRole('button', { name: /Полночь UTC, 20 ноября 2026, 18:30/ })).toBeVisible() // UTC-5
 
   await page.goto('/calendar?view=month&date=2026-11-20')
   await expect(page.locator('[data-date="2026-11-20"] .cal-item')).toContainText('18:30')

@@ -1,4 +1,5 @@
 import { expect, test, type Page } from '@playwright/test'
+import { expectOnline } from './helpers'
 
 // Заглушка системных уведомлений: считаем вызовы в каждой вкладке
 const stubNotification = () => {
@@ -23,15 +24,15 @@ test('two tabs: data sync, one reminder shown in both tabs, single system notifi
   const tab2 = await context.newPage()
   await tab1.goto('/notes')
   await tab2.goto('/notes')
-  await expect(tab1.getByText('онлайн')).toBeVisible()
-  await expect(tab2.getByText('онлайн')).toBeVisible()
+  await expectOnline(tab1)
+  await expectOnline(tab2)
 
   // Создание во вкладке 1 появляется во вкладке 2 без перезагрузки
-  await tab1.getByRole('button', { name: '+ Новая заметка' }).click()
+  await tab1.getByRole('button', { name: 'Новая заметка' }).click()
   await tab1.getByRole('dialog').getByLabel('Заголовок').fill('Синхронизация вкладок')
   await tab1.getByRole('dialog').getByRole('button', { name: 'e2e-rt' }).click()
   await tab1.getByRole('dialog').getByRole('button', { name: 'Сохранить' }).click()
-  await expect(tab2.locator('.note-row', { hasText: 'Синхронизация вкладок' })).toBeVisible()
+  await expect(tab2.getByTestId('note-card').filter({ hasText: 'Синхронизация вкладок' })).toBeVisible()
 
   // Заметка через 10 минут + 4 секунды с напоминанием «за 10 минут» → сработает через ~4 с
   const start = new Date(Date.now() + 10 * 60_000 + 4_000)
@@ -53,7 +54,7 @@ test('two tabs: data sync, one reminder shown in both tabs, single system notifi
   // Новая вкладка, открытая после прочтения, уведомление не показывает
   const tab3 = await context.newPage()
   await tab3.goto('/notes')
-  await expect(tab3.getByText('онлайн')).toBeVisible()
+  await expectOnline(tab3)
   await expect(tab3.getByTestId('reminder-toast')).toHaveCount(0)
 })
 

@@ -30,33 +30,37 @@ export function useInvalidateAll() {
   }
 }
 
+/** Мутация с обновлением данных после ответа сервера (успех не показывается заранее). */
 function useNotesMutation<TVars, TResult>(fn: (v: TVars) => Promise<TResult>) {
   const invalidate = useInvalidateAll()
-  return useMutation({ mutationFn: fn, onSuccess: invalidate })
+  return useMutation({ mutationFn: fn, onSettled: invalidate })
 }
 
+/* Каждое изменение заметки передаёт версию, которую видел клиент (D14): устаревшая → 409. */
+type Versioned = { id: number; version: number }
+const v = (version: number) => `version=${version}`
+
 export const useCreateNote = () =>
-  useNotesMutation((v: NoteInput) => api<Note>('/notes', { method: 'POST', body: JSON.stringify(v) }))
+  useNotesMutation((body: Omit<NoteInput, 'version'>) => api<Note>('/notes', { method: 'POST', body: JSON.stringify(body) }))
 
 export const useUpdateNote = () =>
-  useNotesMutation(({ id, ...v }: Partial<NoteInput> & { id: number }) =>
-    api<Note>(`/notes/${id}`, { method: 'PATCH', body: JSON.stringify(v) }),
+  useNotesMutation(({ id, ...body }: Partial<NoteInput> & Versioned) =>
+    api<Note>(`/notes/${id}`, { method: 'PATCH', body: JSON.stringify(body) }),
   )
 
-export const useTrashNote = () => useNotesMutation((id: number) => api<Note>(`/notes/${id}`, { method: 'DELETE' }))
+export const useTrashNote = () =>
+  useNotesMutation(({ id, version }: Versioned) => api<Note>(`/notes/${id}?${v(version)}`, { method: 'DELETE' }))
 export const useRestoreNote = () =>
-  useNotesMutation((id: number) => api<Note>(`/notes/${id}/restore`, { method: 'POST' }))
+  useNotesMutation(({ id, version }: Versioned) => api<Note>(`/notes/${id}/restore?${v(version)}`, { method: 'POST' }))
 export const usePurgeNote = () =>
-  useNotesMutation((id: number) => api<void>(`/notes/${id}/purge`, { method: 'DELETE' }))
+  useNotesMutation(({ id, version }: Versioned) => api<void>(`/notes/${id}/purge?${v(version)}`, { method: 'DELETE' }))
 export const useEmptyTrash = () => useNotesMutation(() => api<{ deleted: number }>('/trash', { method: 'DELETE' }))
 
 export const useCreateTag = () =>
-  useNotesMutation((v: { name: string; color: string }) =>
-    api<Tag>('/tags', { method: 'POST', body: JSON.stringify(v) }),
-  )
+  useNotesMutation((body: { name: string; color: string }) => api<Tag>('/tags', { method: 'POST', body: JSON.stringify(body) }))
 export const useUpdateTag = () =>
-  useNotesMutation(({ id, ...v }: { id: number; name?: string; color?: string }) =>
-    api<Tag>(`/tags/${id}`, { method: 'PATCH', body: JSON.stringify(v) }),
+  useNotesMutation(({ id, ...body }: { id: number; name?: string; color?: string }) =>
+    api<Tag>(`/tags/${id}`, { method: 'PATCH', body: JSON.stringify(body) }),
   )
 export const useDeleteTag = () => useNotesMutation((id: number) => api<void>(`/tags/${id}`, { method: 'DELETE' }))
 
@@ -72,6 +76,8 @@ export function useNotesPage(params: URLSearchParams) {
 const occUrl = (noteId: number, originalStart: string) =>
   `/notes/${noteId}/occurrences/${encodeURIComponent(originalStart)}`
 
+type OccRef = { noteId: number; originalStart: string; version: number }
+
 export function useOccurrence(noteId: number, originalStart: string) {
   return useQuery({
     queryKey: [...keys.notes, 'occurrence', noteId, originalStart],
@@ -80,14 +86,19 @@ export function useOccurrence(noteId: number, originalStart: string) {
 }
 
 export const useUpdateOccurrence = () =>
-  useNotesMutation(({ noteId, originalStart, ...v }: OccurrenceInput & { noteId: number; originalStart: string }) =>
-    api<Occurrence>(occUrl(noteId, originalStart), { method: 'PATCH', body: JSON.stringify(v) }),
+  useNotesMutation(({ noteId, originalStart, ...body }: Omit<OccurrenceInput, 'version'> & OccRef) =>
+    api<Occurrence>(occUrl(noteId, originalStart), { method: 'PATCH', body: JSON.stringify(body) }),
   )
 export const useCancelOccurrence = () =>
-  useNotesMutation(({ noteId, originalStart }: { noteId: number; originalStart: string }) =>
-    api<void>(occUrl(noteId, originalStart), { method: 'DELETE' }),
+  useNotesMutation(({ noteId, originalStart, version }: OccRef) =>
+    api<void>(`${occUrl(noteId, originalStart)}?${v(version)}`, { method: 'DELETE' }),
   )
 export const useResetOccurrence = () =>
-  useNotesMutation(({ noteId, originalStart }: { noteId: number; originalStart: string }) =>
-    api<Occurrence>(`${occUrl(noteId, originalStart)}/override`, { method: 'DELETE' }),
+  useNotesMutation(({ noteId, originalStart, version }: OccRef) =>
+    api<Occurrence>(`${occUrl(noteId, originalStart)}/override?${v(version)}`, { method: 'DELETE' }),
+  )
+/** Изменить серию начиная с этого вхождения; прошлые вхождения не меняются (D17). */
+export const useSplitSeries = () =>
+  useNotesMutation(({ noteId, originalStart, ...body }: Partial<NoteInput> & OccRef) =>
+    api<Note>(`${occUrl(noteId, originalStart)}/split`, { method: 'POST', body: JSON.stringify(body) }),
   )

@@ -1,19 +1,24 @@
 import { useQueryClient } from '@tanstack/react-query'
-import { useCallback, useEffect, useState } from 'react'
+import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from 'react'
 import { api } from '../api/client'
 import { keys, useUserTz } from '../api/hooks'
 import type { AppNotification } from '../api/types'
 import { electLeader, pruneClaims, shouldShowSystemNotification, showSystemNotification } from '../lib/notify'
 import { formatDateTime } from '../lib/time'
 import { useOpenEditor } from './NoteEditor'
+import { Icon } from './ui/Icon'
 
 const OFFSET_TEXT: Record<number, string> = { 10: 'через 10 минут', 60: 'через 1 час', 1440: 'через 1 день' }
+
+const ConnectionContext = createContext({ online: false })
+// eslint-disable-next-line react-refresh/only-export-components
+export const useConnection = () => useContext(ConnectionContext)
 
 /**
  * WebSocket-соединение вкладки: синхронизация данных между вкладками и уведомления о напоминаниях.
  * Email отправляет только сервер, поэтому число вкладок на него не влияет.
  */
-export function Realtime() {
+export function Realtime({ children }: { children: ReactNode }) {
   const qc = useQueryClient()
   const tz = useUserTz()
   const open = useOpenEditor()
@@ -79,33 +84,35 @@ export function Realtime() {
   }, [qc, add])
 
   const markRead = (ids: number[]) => {
-    setItems((prev) => prev.filter((p) => !ids.includes(p.id)))
-    api('/notifications/read', { method: 'POST', body: JSON.stringify({ ids }) }).catch(() => {})
+    api('/notifications/read', { method: 'POST', body: JSON.stringify({ ids }) })
+      .then(() => setItems((prev) => prev.filter((p) => !ids.includes(p.id))))
+      .catch(() => {})
   }
 
   return (
-    <>
-      <span className={`badge ${online ? 'ok' : 'err'}`} title="Обновления в реальном времени">
-        {online ? 'онлайн' : 'нет соединения'}
-      </span>
+    <ConnectionContext.Provider value={{ online }}>
+      {children}
       {items.length > 0 && (
-        <div className="toasts" role="status" aria-live="polite">
-          {items.length > 1 && <button className="small" onClick={() => markRead(items.map((i) => i.id))}>Скрыть все</button>}
+        <div className="toasts" style={{ bottom: undefined, top: 'var(--s4)' }} aria-live="polite" role="region" aria-label="Напоминания">
+          {items.length > 1 && (
+            <button className="btn btn-sm" style={{ pointerEvents: 'auto', alignSelf: 'flex-end' }} onClick={() => markRead(items.map((i) => i.id))}>
+              Скрыть все ({items.length})
+            </button>
+          )}
           {items.map((n) => (
-            <div key={n.id} className="toast" data-testid="reminder-toast">
-              <strong>🔔 {n.title}</strong>
-              <span className="small">
-                {OFFSET_TEXT[n.offset_minutes]} · {formatDateTime(n.occurrence_start, tz)}
-                {n.late && ' · с опозданием'}
+            <div key={n.id} className="reminder-toast" data-testid="reminder-toast">
+              <strong><Icon name="bell" />{n.title}</strong>
+              <span className="small muted">
+                {OFFSET_TEXT[n.offset_minutes]} · {formatDateTime(n.occurrence_start, tz)}{n.late && ' · с опозданием'}
               </span>
               <span className="row">
-                <button className="small" onClick={() => { markRead([n.id]); open({ kind: 'note', noteId: n.note_id }) }}>Открыть</button>
-                <button className="small" onClick={() => markRead([n.id])}>Прочитано</button>
+                <button className="btn btn-sm btn-primary" onClick={() => { markRead([n.id]); open({ kind: 'note', noteId: n.note_id }) }}>Открыть</button>
+                <button className="btn btn-sm" onClick={() => markRead([n.id])}>Прочитано</button>
               </span>
             </div>
           ))}
         </div>
       )}
-    </>
+    </ConnectionContext.Provider>
   )
 }

@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test'
+import { fillWhen } from './helpers'
 
 test.beforeEach(async ({ request }) => {
   // Пояс пользователя = поясу браузера в тестах
@@ -7,26 +8,29 @@ test.beforeEach(async ({ request }) => {
 
 test('create tag and note via UI, find it, see it in calendar, move it by drag and drop', async ({ page, request }) => {
   await page.goto('/tags')
-  await page.getByPlaceholder('Название тега').fill('Работа')
-  await page.getByRole('button', { name: 'Добавить' }).click()
+  await page.getByPlaceholder('Например, «Работа»').fill('Работа')
+  await page.getByRole('button', { name: 'Создать тег' }).click()
+  await expect(page.getByTestId('toasts')).toContainText('Тег «Работа» создан')
   // В общей e2e-БД могут быть теги из других тестов — ищем среди всех полей названия
   await expect.poll(() => page.getByRole('textbox', { name: 'Название' })
     .evaluateAll((els) => els.map((e) => (e as HTMLInputElement).value))).toContain('Работа')
 
   await page.goto('/notes')
-  await page.getByRole('button', { name: '+ Новая заметка' }).click()
+  await page.getByRole('button', { name: 'Новая заметка' }).click()
   const dialog = page.getByRole('dialog')
   await dialog.getByLabel('Заголовок').fill('Созвон с командой')
   await dialog.getByLabel('Текст').fill('обсудить релиз')
-  await dialog.getByLabel(/Дата и время/).fill('2026-11-10T15:30')
+  await fillWhen(page, '2026-11-10', '15:30')
   await dialog.getByRole('button', { name: 'Работа' }).click()
   await dialog.getByRole('button', { name: 'Сохранить' }).click()
   await expect(dialog).toBeHidden()
+  await expect(page.getByTestId('toasts')).toContainText('Заметка создана') // только после ответа сервера
 
   // Серверный поиск по тексту
   await page.getByLabel('Поиск').fill('релиз')
-  await expect(page.locator('.note-row')).toHaveCount(1)
-  await expect(page.locator('.note-row')).toContainText('10 нояб. 2026, 15:30')
+  const card = page.getByTestId('note-card')
+  await expect(card).toHaveCount(1)
+  await expect(card.getByRole('button', { name: /Созвон с командой, 10 ноября 2026, 15:30/ })).toBeVisible()
 
   // Хранится в UTC: 15:30 Алматы (UTC+5) = 10:30Z
   const list = await (await request.get('/api/notes')).json()
@@ -60,5 +64,5 @@ test('recurring occurrence: drag moves only that occurrence; drop onto a day wit
   await expect(page.locator('.cal-item', { hasText: 'Зарядка' })).toHaveCount(5)
 
   await page.locator('[data-date="2026-11-11"] .cal-item').dragTo(page.locator('[data-date="2026-11-16"]'))
-  await expect(page.getByRole('alert')).toContainText('уже есть вхождение')
+  await expect(page.getByTestId('toasts')).toContainText('уже есть вхождение')
 })

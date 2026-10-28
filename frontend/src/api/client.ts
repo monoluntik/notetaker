@@ -1,31 +1,53 @@
 export class ApiError extends Error {
-  status: number
+  status: number // 0 — запрос не дошёл до сервера
   detail: unknown
 
   constructor(status: number, detail: unknown) {
-    super(typeof detail === 'string' ? detail : formatDetail(detail) ?? `HTTP ${status}`)
+    super(typeof detail === 'string' ? detail : formatDetail(detail) ?? `Ошибка сервера (HTTP ${status})`)
     this.status = status
     this.detail = detail
   }
+}
+
+const FIELD: Record<string, string> = {
+  title: 'Заголовок', body: 'Текст', start_at: 'Дата и время', tag_ids: 'Теги', timezone: 'Часовой пояс',
+  recurrence: 'Повторение', until: 'Дата окончания', reminders: 'Напоминания', email: 'Email', name: 'Название',
+  color: 'Цвет', version: 'Версия',
 }
 
 function formatDetail(detail: unknown): string | undefined {
   if (Array.isArray(detail)) {
     // Ошибки валидации FastAPI: [{loc, msg}]
     return detail
-      .map((d: { loc?: unknown[]; msg?: string }) => `${(d.loc ?? []).slice(1).join('.')}: ${d.msg}`)
+      .map((d: { loc?: unknown[]; msg?: string }) => {
+        const loc = (d.loc ?? []).slice(1).map((x) => FIELD[String(x)] ?? String(x)).join(' → ')
+        const msg = (d.msg ?? '').replace(/^Value error, /, '')
+        return loc ? `${loc}: ${msg}` : msg
+      })
       .join('; ')
   }
   return undefined
 }
 
+export const isConflict = (e: unknown) => e instanceof ApiError && e.status === 409
+export const isEditConflict = (e: unknown) => isConflict(e) && /друг(ой|ом)/.test((e as Error).message)
+export const isNetworkError = (e: unknown) => e instanceof ApiError && e.status === 0
+
 export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
-  const res = await fetch(`/api${path}`, {
-    ...init,
-    headers: { 'Content-Type': 'application/json', ...(init.headers ?? {}) },
-  })
+  let res: Response
+  try {
+    res = await fetch(`/api${path}`, {
+      ...init,
+      headers: { 'Content-Type': 'application/json', ...(init.headers ?? {}) },
+    })
+  } catch {
+    throw new ApiError(0, 'Нет связи с сервером. Изменения не сохранены — проверьте подключение и повторите.')
+  }
   if (res.status === 204) return undefined as T
   const body = await res.json().catch(() => null)
-  if (!res.ok) throw new ApiError(res.status, body?.detail ?? body)
+  if (!res.ok) {
+    if (res.status >= 500 && !body?.detail) throw new ApiError(res.status, 'Сервер временно недоступен. Повторите попытку позже.')
+    throw new ApiError(res.status, body?.detail ?? body)
+  }
   return body as T
 }

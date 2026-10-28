@@ -75,6 +75,7 @@ export interface Occurrence {
   tags: Tag[]
   is_recurring: boolean
   is_exception: boolean
+  note_version: number
 }
 
 export interface Upcoming {

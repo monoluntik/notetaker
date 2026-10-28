@@ -4,7 +4,7 @@ import { isStale, recategorize } from './upcoming'
 
 const occ = (title: string, start_at: string, is_active = true): Occurrence => ({
   note_id: 1, original_start: start_at, start_at, title, body: '', is_active, timezone: 'UTC',
-  tags: [], is_recurring: false, is_exception: false,
+  tags: [], is_recurring: false, is_exception: false, note_version: 1,
 })
 
 const data: Upcoming = {

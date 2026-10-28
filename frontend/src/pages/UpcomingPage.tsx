@@ -4,8 +4,10 @@ import { api } from '../api/client'
 import { keys, useUserTz } from '../api/hooks'
 import type { Occurrence, Upcoming } from '../api/types'
 import { useOpenEditor } from '../components/NoteEditor'
-import { TagChip } from '../components/TagChip'
-import { formatDateTime, formatTime } from '../lib/time'
+import { TagBadge } from '../components/ui/controls'
+import { Icon } from '../components/ui/Icon'
+import { EmptyState, ErrorState, SkeletonList } from '../components/ui/states'
+import { inZone } from '../lib/time'
 import { isStale, recategorize } from '../lib/upcoming'
 
 const TICK_MS = 15_000
@@ -13,7 +15,7 @@ const TICK_MS = 15_000
 export function UpcomingPage() {
   const tz = useUserTz()
   const [overdueLimit, setOverdueLimit] = useState(50)
-  const { data, refetch } = useQuery({
+  const { data, error, refetch } = useQuery({
     queryKey: [...keys.notes, 'upcoming', overdueLimit],
     queryFn: () => api<Upcoming>(`/upcoming?overdue_limit=${overdueLimit}`),
     placeholderData: (prev) => prev,
@@ -30,52 +32,83 @@ export function UpcomingPage() {
     if (data && isStale(data, now)) refetch()
   }, [data, now, refetch])
 
-  if (!data) return <p>Загрузка…</p>
-  const s = recategorize(data, now)
+  const today = inZone(now.toISOString(), tz).setLocale('ru')
 
   return (
-    <section>
-      <h1>Предстоящие</h1>
-      <Section title="Сегодня" items={s.today} tz={tz} timeOnly empty="На сегодня больше ничего" />
-      <Section title="На этой неделе" items={s.week} tz={tz} empty="До конца недели пусто" />
-      <Section title="Прошедшие активные" items={s.overdue} total={s.overdueTotal} tz={tz} empty="Нет просроченных активных заметок"
-        hint="Все активные заметки, время которых прошло. Отметьте заметку неактивной, чтобы убрать её отсюда." />
-      {s.overdue.length < s.overdueTotal && (
-        <p className="muted small" data-testid="overdue-more">
-          Показано {s.overdue.length} из {s.overdueTotal}.{' '}
-          <button className="small" onClick={() => setOverdueLimit((l) => Math.min(1000, l + 100))} disabled={overdueLimit >= 1000}>
-            Показать ещё
-          </button>
-          {overdueLimit >= 1000 && ' Остальные — в списке «Заметки» с фильтром «Активные» и периодом.'}
-        </p>
-      )}
-    </section>
+    <>
+      <div className="page-head">
+        <div>
+          <h1>Предстоящие</h1>
+          <p className="lead" style={{ textTransform: 'capitalize' }}>{today.toFormat('cccc, d MMMM')}</p>
+        </div>
+      </div>
+      {error && !data ? <div className="card"><ErrorState error={error} onRetry={() => refetch()} /></div>
+        : !data ? <SkeletonList rows={4} />
+        : <Sections data={data} now={now} tz={tz} overdueLimit={overdueLimit} onMore={() => setOverdueLimit((l) => Math.min(1000, l + 100))} />}
+    </>
   )
 }
 
-function Section({ title, items, total, tz, empty, timeOnly, hint }: {
-  title: string; items: Occurrence[]; total?: number; tz: string; empty: string; timeOnly?: boolean; hint?: string
+function Sections({ data, now, tz, overdueLimit, onMore }: { data: Upcoming; now: Date; tz: string; overdueLimit: number; onMore: () => void }) {
+  const s = recategorize(data, now)
+  return (
+    <div className="upcoming-grid">
+      <div className="stack" style={{ gap: 'var(--s5)' }}>
+        <Section title="Сегодня" items={s.today} tz={tz} timeOnly empty="На сегодня больше ничего не запланировано" />
+        <Section title="На этой неделе" items={s.week} tz={tz} empty="До конца недели заметок нет" />
+      </div>
+      <div className="stack">
+        <Section title="Прошедшие активные" items={s.overdue} total={s.overdueTotal} tz={tz} overdue
+          empty="Нет активных заметок, время которых прошло"
+          hint="Все активные заметки, время которых прошло. Отметьте заметку неактивной, чтобы убрать её отсюда." />
+        {s.overdue.length < s.overdueTotal && (
+          <p className="muted small" data-testid="overdue-more">
+            Показано {s.overdue.length} из {s.overdueTotal}.{' '}
+            <button className="btn btn-sm" onClick={onMore} disabled={overdueLimit >= 1000}>Показать ещё</button>
+            {overdueLimit >= 1000 && ' Остальные — в разделе «Заметки» с фильтром «Активные» и периодом.'}
+          </p>
+        )}
+      </div>
+    </div>
+  )
+}
+
+function Section({ title, items, total, tz, empty, timeOnly, hint, overdue }: {
+  title: string; items: Occurrence[]; total?: number; tz: string; empty: string; timeOnly?: boolean; hint?: string; overdue?: boolean
 }) {
   const open = useOpenEditor()
   return (
-    <div className="upcoming-section" data-testid={`section-${title}`}>
-      <h2>{title} <span className="muted small">({total ?? items.length})</span></h2>
-      {hint && <p className="muted small">{hint}</p>}
-      <ul className="note-list">
-        {items.map((o) => (
-          <li key={`${o.note_id}-${o.original_start}`} className={`note-row ${o.is_active ? '' : 'inactive'}`}>
-            <button className="note-main" onClick={() => open(o.is_recurring
-              ? { kind: 'occurrence', noteId: o.note_id, originalStart: o.original_start }
-              : { kind: 'note', noteId: o.note_id })}>
-              <span className="note-time">{timeOnly ? formatTime(o.start_at, tz) : formatDateTime(o.start_at, tz)}</span>
-              <span className="note-title">{o.title}</span>
-              {o.is_recurring && <span className="muted small" title="Повторяющаяся">↻</span>}
-            </button>
-            <span className="chips">{o.tags.map((t) => <TagChip key={t.id} tag={t} />)}</span>
-          </li>
-        ))}
-        {items.length === 0 && <li className="muted small">{empty}</li>}
-      </ul>
-    </div>
+    <section className={`card section-card ${overdue ? 'overdue' : ''}`} data-testid={`section-${title}`} aria-label={title}>
+      <h2>{title} <span className="count">{total ?? items.length}</span></h2>
+      {hint && <p className="muted xsmall">{hint}</p>}
+      {items.length === 0 ? (
+        <EmptyState icon={overdue ? 'check' : 'sun'} title={empty} />
+      ) : (
+        <ul className="note-list" style={{ gap: 2 }}>
+          {items.map((o) => {
+            const l = inZone(o.start_at, tz).setLocale('ru')
+            return (
+              <li key={`${o.note_id}-${o.original_start}`} className={`agenda-item ${o.is_active ? '' : 'inactive'}`}>
+                <span className="agenda-time">{timeOnly ? l.toFormat('HH:mm') : <>{l.toFormat('ccc, d MMM')}<br />{l.toFormat('HH:mm')}</>}</span>
+                <span className="agenda-bar" style={{ background: o.tags[0]?.color ?? 'var(--border-strong)' }} />
+                <span className="agenda-main">
+                  <button type="button" className="note-open" onClick={() => open(o.is_recurring
+                    ? { kind: 'occurrence', noteId: o.note_id, originalStart: o.original_start }
+                    : { kind: 'note', noteId: o.note_id })}>
+                    <span className="note-title clamp-2">{o.title}</span>
+                  </button>
+                  <span className="note-meta">
+                    {o.tags.slice(0, 3).map((t) => <TagBadge key={t.id} name={t.name} color={t.color} />)}
+                    {o.tags.length > 3 && <span>+{o.tags.length - 3}</span>}
+                    {o.is_recurring && <span className="meta-item"><Icon name="repeat" />серия</span>}
+                    {!o.is_active && <span className="badge badge-muted">неактивна</span>}
+                  </span>
+                </span>
+              </li>
+            )
+          })}
+        </ul>
+      )}
+    </section>
   )
 }
