@@ -16,7 +16,7 @@ class Settings(BaseSettings):
     scheduler_enabled: bool = True
     scheduler_interval_seconds: float = 15.0
 
-    # Email: "console" (лог), "smtp" (например, Mailpit в docker compose)
+    # Email: "console" (лог), "smtp" (например, Mailpit в docker compose), "memory" (тесты)
     email_backend: str = "console"
     smtp_host: str = "localhost"
     smtp_port: int = 1025

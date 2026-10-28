@@ -79,6 +79,16 @@ class Recurrence(BaseModel):
     until: date  # локальная дата окончания (в поясе заметки), включительно
 
 
+ReminderOffset = Literal[10, 60, 1440]
+
+
+def _unique_sorted(v: list[int]) -> list[int]:
+    return sorted(set(v))
+
+
+Reminders = Annotated[list[ReminderOffset], AfterValidator(_unique_sorted)]
+
+
 class NoteBase(BaseModel):
     title: Annotated[NonEmpty, Field(max_length=200)]
     body: Annotated[str, Field(max_length=20000)] = ""
@@ -87,6 +97,7 @@ class NoteBase(BaseModel):
     tag_ids: Annotated[list[int], Field(min_length=1)]
     is_active: bool = True
     recurrence: Recurrence | None = None
+    reminders: Reminders = []  # минуты до события: 10, 60, 1440
 
 
 class NoteCreate(NoteBase):
@@ -101,6 +112,7 @@ class NoteUpdate(BaseModel):
     tag_ids: Annotated[list[int], Field(min_length=1)] | None = None
     is_active: bool | None = None
     recurrence: Recurrence | None = None  # явный null — отменить повторение
+    reminders: Reminders | None = None
 
 
 class NoteOut(ORM):
@@ -115,6 +127,7 @@ class NoteOut(ORM):
     updated_at: UtcDatetime
     tags: list[TagOut]
     recurrence: Recurrence | None
+    reminders: list[int]
 
 
 class Page[T](BaseModel):
@@ -182,3 +195,19 @@ class OccurrenceUpdate(BaseModel):
     body: Annotated[str, Field(max_length=20000)] | None = None
     start_at: AwareDatetime | None = None
     is_active: bool | None = None
+
+
+class NotificationOut(ORM):
+    """Уведомление о напоминании в приложении."""
+
+    id: int
+    note_id: int
+    original_start: UtcDatetime
+    occurrence_start: UtcDatetime
+    fire_at: UtcDatetime
+    offset_minutes: int
+    title: str
+    status: str
+    late: bool
+    created_at: UtcDatetime
+    read_at: UtcDatetime | None

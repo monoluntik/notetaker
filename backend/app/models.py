@@ -81,6 +81,9 @@ class Note(TimestampMixin, Base):
     recurrence_until: Mapped[date | None] = mapped_column(Date)
 
     tags: Mapped[list[Tag]] = relationship(secondary=note_tags, lazy="selectin", order_by=Tag.name)
+    reminder_rules: Mapped[list["NoteReminder"]] = relationship(
+        cascade="all, delete-orphan", passive_deletes=True, lazy="selectin"
+    )
 
     overrides: Mapped[list["OccurrenceOverride"]] = relationship(
         back_populates="note", cascade="all, delete-orphan", passive_deletes=True, lazy="selectin"
@@ -89,6 +92,10 @@ class Note(TimestampMixin, Base):
     @property
     def is_recurring(self) -> bool:
         return self.recurrence_freq != "none"
+
+    @property
+    def reminders(self) -> list[int]:
+        return sorted(r.offset_minutes for r in self.reminder_rules)
 
     @property
     def recurrence(self) -> dict | None:
@@ -120,3 +127,59 @@ class OccurrenceOverride(TimestampMixin, Base):
     is_active: Mapped[bool | None] = mapped_column(Boolean)
 
     note: Mapped[Note] = relationship(back_populates="overrides")
+
+
+REMINDER_OFFSETS = (10, 60, 1440)  # за 10 минут, за 1 час, за 1 день
+
+
+class NoteReminder(Base):
+    __tablename__ = "note_reminders"
+    __table_args__ = (CheckConstraint("offset_minutes IN (10, 60, 1440)", name="offset_valid"),)
+
+    note_id: Mapped[int] = mapped_column(ForeignKey("notes.id", ondelete="CASCADE"), primary_key=True)
+    offset_minutes: Mapped[int] = mapped_column(Integer, primary_key=True)
+
+
+class ReminderDelivery(Base):
+    """Журнал напоминаний: одна строка = одно событие «напомнить о вхождении за N минут».
+
+    Уникальный ключ события гарантирует, что повторный скан, второй процесс или перезапуск не
+    создадут повторное напоминание (DECISIONS D6). Строка также служит outbox для email и
+    источником уведомлений в приложении.
+    status: pending — email ждёт отправки; sent — email отправлен; no_email — email не настроен,
+    только уведомление в приложении; failed — email не удалось отправить за MAX_ATTEMPTS попыток;
+    missed — пропущено во время простоя, вхождение уже началось (DECISIONS D7), не отправляется.
+    """
+
+    __tablename__ = "reminder_deliveries"
+    __table_args__ = (
+        UniqueConstraint("note_id", "original_start", "offset_minutes", "fire_at", name="uq_reminder_event"),
+        Index("ix_delivery_pending", "status", "fire_at"),
+        Index("ix_delivery_fire_at", "fire_at"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    note_id: Mapped[int] = mapped_column(ForeignKey("notes.id", ondelete="CASCADE"), nullable=False)
+    original_start: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    offset_minutes: Mapped[int] = mapped_column(Integer, nullable=False)
+    fire_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    occurrence_start: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    title: Mapped[str] = mapped_column(String(200), nullable=False)
+    status: Mapped[str] = mapped_column(String(10), nullable=False)
+    late: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
+    attempts: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    last_error: Mapped[str | None] = mapped_column(Text)
+    email_to: Mapped[str | None] = mapped_column(String(320))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    read_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class SchedulerState(Base):
+    """Водяной знак планировщика: момент последнего успешного скана (DECISIONS D7)."""
+
+    __tablename__ = "scheduler_state"
+    __table_args__ = (CheckConstraint("id = 1", name="scheduler_single_row"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    last_scan_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

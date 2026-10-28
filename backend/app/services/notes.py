@@ -4,7 +4,7 @@ from sqlalchemy import Date, DateTime, Select, and_, cast, delete, func, literal
 from sqlalchemy.orm import Session
 
 from app.errors import Conflict, Invalid, NotFound
-from app.models import Note, Tag, note_tags
+from app.models import Note, NoteReminder, Tag, note_tags
 from app.schemas import NoteCreate, NoteUpdate, Recurrence, SortField, SortOrder
 from app.services.recurrence import local_date
 from app.services.settings import get_settings_row
@@ -61,6 +61,7 @@ def create_note(db: Session, data: NoteCreate) -> Note:
     if data.recurrence:
         note.recurrence_freq = data.recurrence.freq
         note.recurrence_until = data.recurrence.until
+    note.reminder_rules = [NoteReminder(offset_minutes=m) for m in data.reminders]
     db.add(note)
     db.commit()
     return note
@@ -82,6 +83,9 @@ def update_note(db: Session, note_id: int, data: NoteUpdate) -> Note:
         note.is_active = data.is_active
     if "tag_ids" in fields and data.tag_ids is not None:
         note.tags = _load_tags(db, data.tag_ids)
+    if "reminders" in fields and data.reminders is not None:
+        keep = {r.offset_minutes: r for r in note.reminder_rules}
+        note.reminder_rules = [keep.get(m) or NoteReminder(offset_minutes=m) for m in data.reminders]
     if "recurrence" in fields:
         rec = data.recurrence
         note.recurrence_freq = rec.freq if rec else "none"

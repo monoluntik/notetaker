@@ -50,3 +50,6 @@ cd frontend && npm run e2e                    # Playwright: сам подним�
 | 2026-10-28 12:53 | Э5 | `npm run build` / `npm test` / `eslint` | OK / 7 passed / 0 проблем |
 | 2026-10-28 13:10 | Э4 | `npm run e2e` (Playwright 1.64.1, Chromium) | 2 passed: создание тега/заметки через UI → поиск → календарь → DnD (дата меняется, время 15:30 Алматы сохраняется, в БД `10:30Z`); DnD вхождения серии переносит только его; перенос на день с другим вхождением → сообщение об ошибке 409 |
 | 2026-10-28 13:11 | Э4 | `pytest -q` / `npm test` | 54 passed / 13 passed |
+| 2026-10-28 13:16 | Э6 | `pytest -q` ×3 | 70 passed каждый раз (16 тестов напоминаний/WS) |
+| 2026-10-28 13:17 | Э6 | `npm test` / `npm run build` / `eslint` | 16 passed / OK / 0 проблем |
+| 2026-10-28 13:17 | Э6 | `npm run e2e` | 4 passed; в логе backend ровно 1 письмо `EMAIL to=me@example.com … Напомни мне` при 3 вкладках |

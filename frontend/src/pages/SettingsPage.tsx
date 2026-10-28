@@ -49,9 +49,24 @@ function SettingsForm({ initial }: { initial: UserSettings }) {
         <p className="muted small">
           Смена пояса меняет только отображение времени. Моменты заметок и уже запланированных напоминаний не сдвигаются.
         </p>
+        <NotificationPermission />
         {msg && <p className={msg.ok ? 'ok' : 'error'} role="status">{msg.text}</p>}
         <div className="actions"><button className="primary" type="submit">Сохранить</button></div>
       </form>
     </section>
+  )
+}
+
+function NotificationPermission() {
+  const supported = typeof Notification !== 'undefined'
+  const [perm, setPerm] = useState(supported ? Notification.permission : 'denied')
+  if (!supported) return <p className="muted small">Браузер не поддерживает системные уведомления; напоминания будут видны внутри приложения.</p>
+  return (
+    <div className="field">
+      <span>Уведомления браузера: <strong>{perm === 'granted' ? 'разрешены' : perm === 'denied' ? 'запрещены' : 'не запрошены'}</strong></span>
+      {perm === 'default' && (
+        <button type="button" onClick={() => Notification.requestPermission().then(setPerm)}>Разрешить уведомления</button>
+      )}
+    </div>
   )
 }

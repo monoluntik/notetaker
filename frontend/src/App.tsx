@@ -3,6 +3,7 @@ import { NavLink, Route, Routes } from 'react-router-dom'
 import { api } from './api/client'
 import { useUserTz } from './api/hooks'
 import { NoteEditorProvider } from './components/NoteEditor'
+import { Realtime } from './components/Realtime'
 import { CalendarPage } from './pages/CalendarPage'
 import { NotesPage } from './pages/NotesPage'
 import { SettingsPage } from './pages/SettingsPage'
@@ -37,6 +38,7 @@ export default function App() {
           </nav>
           <span className="muted small">{tz}</span>
           <HealthBadge />
+          <Realtime />
         </header>
         <main>
           <Routes>

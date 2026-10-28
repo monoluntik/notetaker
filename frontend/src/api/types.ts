@@ -20,6 +20,7 @@ export interface Note {
   updated_at: string
   tags: Tag[]
   recurrence: Recurrence | null
+  reminders: number[]
 }
 
 export type Freq = 'daily' | 'weekly' | 'monthly'
@@ -49,6 +50,7 @@ export interface NoteInput {
   tag_ids: number[]
   is_active: boolean
   recurrence: Recurrence | null
+  reminders: number[]
 }
 
 export interface OccurrenceInput {
@@ -79,4 +81,18 @@ export interface Upcoming {
   today: Occurrence[]
   week: Occurrence[]
   overdue: Occurrence[]
+}
+
+export interface AppNotification {
+  id: number
+  note_id: number
+  original_start: string
+  occurrence_start: string
+  fire_at: string
+  offset_minutes: number
+  title: string
+  status: string
+  late: boolean
+  created_at: string
+  read_at: string | null
 }

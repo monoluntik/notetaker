@@ -73,6 +73,8 @@ function defaultStartIso(): string {
   return d.toISOString()
 }
 
+const REMINDERS: [number, string][] = [[10, 'за 10 минут'], [60, 'за 1 час'], [1440, 'за 1 день']]
+
 const FREQ_LABEL: Record<Freq | 'none', string> = {
   none: 'Не повторять', daily: 'Ежедневно', weekly: 'Еженедельно', monthly: 'Ежемесячно',
 }
@@ -94,6 +96,7 @@ function NoteForm({ note, defaultStart, onClose }: { note?: Note; defaultStart?:
   const [until, setUntil] = useState(
     note?.recurrence?.until ?? DateTime.fromISO(initialStart).plus({ months: 1 }).toISODate()!,
   )
+  const [reminders, setReminders] = useState<number[]>(note?.reminders ?? [])
   const [error, setError] = useState<string | null>(null)
 
   const readOnly = note?.deleted_at != null
@@ -109,6 +112,7 @@ function NoteForm({ note, defaultStart, onClose }: { note?: Note; defaultStart?:
       const payload = {
         title, body, start_at: fromLocalInput(start, tz), tag_ids: tagIds, is_active: active,
         recurrence: freq === 'none' ? null : { freq, until },
+        reminders,
         // Пояс заметки меняется, только если пользователь менял время (DECISIONS D4)
         timezone: note && !timeChanged ? note.timezone : tz,
       }
@@ -159,6 +163,18 @@ function NoteForm({ note, defaultStart, onClose }: { note?: Note; defaultStart?:
             <div className="chips">
               {tags.length === 0 && <span className="muted">Сначала создайте тег на странице «Теги»</span>}
               {tags.map((t) => <TagChip key={t.id} tag={t} selected={tagIds.includes(t.id)} onClick={() => toggleTag(t.id)} />)}
+            </div>
+          </div>
+          <div className="field">
+            <span>Напоминания <span className="muted small">(email и уведомление в браузере, только для активной заметки)</span></span>
+            <div className="row">
+              {REMINDERS.map(([m, label]) => (
+                <label key={m} className="row">
+                  <input type="checkbox" checked={reminders.includes(m)}
+                    onChange={(e) => setReminders((r) => (e.target.checked ? [...r, m] : r.filter((x) => x !== m)))} />
+                  {label}
+                </label>
+              ))}
             </div>
           </div>
           <label className="row"><input type="checkbox" checked={active} onChange={(e) => setActive(e.target.checked)} /> Активна</label>

@@ -31,13 +31,14 @@ def migrated_db() -> str:
 
 @pytest.fixture()
 def engine(migrated_db):
-    eng = create_engine(migrated_db)
+    eng = create_engine(migrated_db, connect_args={"options": "-c timezone=UTC"})
     with eng.begin() as conn:
         tables = conn.execute(
             text("SELECT tablename FROM pg_tables WHERE schemaname='public' AND tablename <> 'alembic_version'")
         ).scalars().all()
         conn.execute(text(f"TRUNCATE {', '.join(tables)} RESTART IDENTITY CASCADE"))
         conn.execute(text("INSERT INTO user_settings (id, timezone) VALUES (1, 'UTC')"))
+        conn.execute(text("INSERT INTO scheduler_state (id, last_scan_at) VALUES (1, NULL)"))
     yield eng
     eng.dispose()
 
@@ -46,7 +47,8 @@ def engine(migrated_db):
 def settings(engine):
     from app.config import Settings
 
-    return Settings(database_url=engine.url.render_as_string(hide_password=False), scheduler_enabled=False)
+    return Settings(database_url=engine.url.render_as_string(hide_password=False), scheduler_enabled=False,
+                    email_backend="memory")
 
 
 @pytest.fixture()
