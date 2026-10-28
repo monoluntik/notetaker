@@ -35,8 +35,12 @@ def list_occurrences(
 
 
 @router.get("/upcoming", response_model=UpcomingOut)
-def upcoming(db: Session = Depends(get_db), now: datetime = Depends(get_now)):
-    return get_upcoming(db, now)
+def upcoming(
+    db: Session = Depends(get_db),
+    now: datetime = Depends(get_now),
+    overdue_limit: Annotated[int, Query(ge=1, le=1000)] = 50,
+):
+    return get_upcoming(db, now, overdue_limit)
 
 
 @router.get("/notes/{note_id}/occurrences/{original_start}", response_model=OccurrenceOut)

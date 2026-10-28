@@ -32,12 +32,12 @@ def test_upcoming_sections_in_user_timezone(client, at):
     make_note(client, [t["id"]], title="next-monday", start_at="2026-11-08T19:00:00Z")       # пн 00:00 — уже не эта неделя
     make_note(client, [t["id"]], title="old-active", start_at="2026-10-20T10:00:00Z")
     make_note(client, [t["id"]], title="old-inactive", start_at="2026-10-21T10:00:00Z", is_active=False)
-    make_note(client, [t["id"]], title="too-old", start_at="2026-09-01T10:00:00Z")           # > 30 дней
+    make_note(client, [t["id"]], title="too-old", start_at="2026-09-01T10:00:00Z")           # > 30 дней — всё равно показывается
 
     assert sections(client) == {
         "today": ["later-today"],
         "week": ["tomorrow-local", "sunday"],
-        "overdue": ["past-today", "old-active"],
+        "overdue": ["past-today", "old-active", "too-old"],  # давность не ограничена
     }
 
 
@@ -70,3 +70,45 @@ def test_occurrences_window_validation(client):
     assert client.get("/api/occurrences", params={"from": "2026-11-01T00:00:00Z", "to": "2026-10-01T00:00:00Z"}).status_code == 422
     assert client.get("/api/occurrences", params={"from": "2026-01-01T00:00:00Z", "to": "2026-06-01T00:00:00Z"}).status_code == 422
     assert client.get("/api/occurrences", params={"from": "2026-11-01T00:00:00Z", "to": "2026-12-01T00:00:00Z"}).json() == []
+
+
+def test_overdue_has_no_hidden_cutoff(client, at):
+    """Давно прошедшие активные заметки не пропадают; при ограничении ответа есть общее число."""
+    t = make_tag(client)
+    at("2026-11-04T12:00:00Z")
+    make_note(client, [t["id"]], title="year-ago", start_at="2025-11-01T10:00:00Z")
+    make_note(client, [t["id"]], title="3-months", start_at="2026-08-01T10:00:00Z")
+    make_note(client, [t["id"]], title="inactive-old", start_at="2026-07-01T10:00:00Z", is_active=False)
+    s = make_note(client, [t["id"]], title="old-series", start_at="2026-06-01T10:00:00Z", timezone="UTC",
+                  recurrence={"freq": "monthly", "until": "2026-08-31"})
+    d = client.get("/api/upcoming").json()
+    assert [o["title"] for o in d["overdue"]] == ["3-months", "old-series", "old-series", "old-series", "year-ago"]
+    assert d["overdue_total"] == 5
+
+    d = client.get("/api/upcoming", params={"overdue_limit": 2}).json()
+    assert [o["title"] for o in d["overdue"]] == ["3-months", "old-series"] and d["overdue_total"] == 5
+    assert client.get("/api/upcoming", params={"overdue_limit": 0}).status_code == 422
+
+    client.patch(f"/api/notes/{s['id']}", json={"is_active": False})  # неактивная серия уходит
+    assert client.get("/api/upcoming").json()["overdue_total"] == 2
+
+
+def test_overdue_performance(client, engine, at):
+    import time
+    from sqlalchemy import text
+    t = make_tag(client)
+    at("2026-11-04T12:00:00Z")
+    with engine.begin() as conn:
+        conn.execute(text("""
+            INSERT INTO notes (title, body, start_at, timezone)
+            SELECT 'Past ' || g, '', timestamptz '2026-11-04 00:00Z' - (g || ' hours')::interval, 'UTC'
+            FROM generate_series(1, 5000) g"""))
+        conn.execute(text("INSERT INTO note_tags SELECT id, :t FROM notes"), {"t": t["id"]})
+    make_note(client, [t["id"]], title="daily", start_at="2025-01-01T08:00:00Z", timezone="UTC",
+              recurrence={"freq": "daily", "until": "2026-12-31"})
+    t0 = time.perf_counter()
+    d = client.get("/api/upcoming").json()
+    elapsed = time.perf_counter() - t0
+    print("upcoming with 5000 past notes + 2-year daily series:", round(elapsed, 3), "s")
+    assert d["overdue_total"] == 5000 + 673 and len(d["overdue"]) == 50
+    assert elapsed < 2.0

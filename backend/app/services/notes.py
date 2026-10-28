@@ -4,7 +4,7 @@ from sqlalchemy import Date, DateTime, Select, and_, cast, delete, func, literal
 from sqlalchemy.orm import Session
 
 from app.errors import Conflict, Invalid, NotFound
-from app.models import Note, NoteReminder, Tag, note_tags
+from app.models import Note, NoteReminder, OccurrenceOverride, Tag, note_tags
 from app.schemas import NoteCreate, NoteUpdate, Recurrence, SortField, SortOrder
 from app.services.recurrence import local_date
 from app.services.settings import get_settings_row
@@ -149,7 +149,21 @@ def build_list_query(
     stmt = select(Note).where(Note.deleted_at.is_not(None) if deleted else Note.deleted_at.is_(None))
     if q and q.strip():
         pattern = f"%{_escape_like(q.strip())}%"
-        stmt = stmt.where(or_(Note.title.ilike(pattern, escape="\\"), Note.body.ilike(pattern, escape="\\")))
+        # Серия находится и по изменённому заголовку/тексту отдельного (не удалённого) вхождения
+        in_occurrence = select(OccurrenceOverride.note_id).where(
+            OccurrenceOverride.is_cancelled.is_(False),
+            or_(
+                OccurrenceOverride.title.ilike(pattern, escape="\\"),
+                OccurrenceOverride.body.ilike(pattern, escape="\\"),
+            ),
+        )
+        stmt = stmt.where(
+            or_(
+                Note.title.ilike(pattern, escape="\\"),
+                Note.body.ilike(pattern, escape="\\"),
+                Note.id.in_(in_occurrence),
+            )
+        )
     if tag_ids:
         # «любой из выбранных тегов»
         stmt = stmt.where(Note.id.in_(select(note_tags.c.note_id).where(note_tags.c.tag_id.in_(tag_ids))))

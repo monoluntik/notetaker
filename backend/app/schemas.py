@@ -186,6 +186,7 @@ class UpcomingOut(ORM):
     today: list[OccurrenceOut]
     week: list[OccurrenceOut]
     overdue: list[OccurrenceOut]
+    overdue_total: int  # всего прошедших активных; в overdue — первые overdue_limit
 
 
 class OccurrenceUpdate(BaseModel):
