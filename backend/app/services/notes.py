@@ -1,11 +1,12 @@
-from datetime import datetime
+from datetime import datetime, timedelta
 
-from sqlalchemy import Select, delete, func, or_, select
+from sqlalchemy import Date, DateTime, Select, and_, cast, delete, func, literal, or_, select
 from sqlalchemy.orm import Session
 
 from app.errors import Conflict, Invalid, NotFound
 from app.models import Note, Tag, note_tags
-from app.schemas import NoteCreate, NoteUpdate, SortField, SortOrder
+from app.schemas import NoteCreate, NoteUpdate, Recurrence, SortField, SortOrder
+from app.services.recurrence import local_date
 from app.services.settings import get_settings_row
 from app.timeutil import ensure_aware, utcnow
 
@@ -17,6 +18,19 @@ def _load_tags(db: Session, tag_ids: list[int]) -> list[Tag]:
     if missing:
         raise Invalid(f"Теги не найдены: {sorted(missing)}")
     return list(tags)
+
+
+MAX_SERIES_SPAN = timedelta(days=5 * 366)
+
+
+def _validate_recurrence(rec: Recurrence | None, start_at: datetime, tz: str) -> None:
+    if rec is None:
+        return
+    first = local_date(start_at, tz)
+    if rec.until < first:
+        raise Invalid("Дата окончания повторения раньше даты заметки")
+    if rec.until - first > MAX_SERIES_SPAN:
+        raise Invalid("Серия не может быть длиннее 5 лет")
 
 
 def get_note(db: Session, note_id: int, *, include_deleted: bool = True) -> Note:
@@ -43,6 +57,10 @@ def create_note(db: Session, data: NoteCreate) -> Note:
         is_active=data.is_active,
         tags=_load_tags(db, data.tag_ids),
     )
+    _validate_recurrence(data.recurrence, note.start_at, tz)
+    if data.recurrence:
+        note.recurrence_freq = data.recurrence.freq
+        note.recurrence_until = data.recurrence.until
     db.add(note)
     db.commit()
     return note
@@ -51,6 +69,7 @@ def create_note(db: Session, data: NoteCreate) -> Note:
 def update_note(db: Session, note_id: int, data: NoteUpdate) -> Note:
     note = _get_editable(db, note_id)
     fields = data.model_fields_set
+    old_rule = (note.start_at, note.timezone, note.recurrence_freq)
     if "title" in fields and data.title is not None:
         note.title = data.title
     if "body" in fields and data.body is not None:
@@ -63,6 +82,17 @@ def update_note(db: Session, note_id: int, data: NoteUpdate) -> Note:
         note.is_active = data.is_active
     if "tag_ids" in fields and data.tag_ids is not None:
         note.tags = _load_tags(db, data.tag_ids)
+    if "recurrence" in fields:
+        rec = data.recurrence
+        note.recurrence_freq = rec.freq if rec else "none"
+        note.recurrence_until = rec.until if rec else None
+    if note.is_recurring:
+        rec = Recurrence(freq=note.recurrence_freq, until=note.recurrence_until)
+        _validate_recurrence(rec, note.start_at, note.timezone)
+    # Исключения привязаны к моментам, которые даёт правило. Если правило изменилось, они
+    # больше не соответствуют вхождениям и удаляются (DECISIONS D5). Смена until их не трогает.
+    if (note.start_at, note.timezone, note.recurrence_freq) != old_rule:
+        note.overrides.clear()
     note.updated_at = func.now()  # теги меняют только связь, поэтому время обновляем явно
     db.commit()
     db.refresh(note)
@@ -122,7 +152,15 @@ def build_list_query(
     if active is not None:
         stmt = stmt.where(Note.is_active.is_(active))
     if date_from is not None:
-        stmt = stmt.where(Note.start_at >= date_from)
+        # Серия попадает в период, если её диапазон [start, until] пересекается с ним (D9).
+        # Конец серии — полночь после until в поясе заметки.
+        series_end = func.timezone(Note.timezone, cast(cast(Note.recurrence_until + literal(1), Date), DateTime()))
+        stmt = stmt.where(
+            or_(
+                and_(Note.recurrence_freq == "none", Note.start_at >= date_from),
+                and_(Note.recurrence_freq != "none", series_end > date_from),
+            )
+        )
     if date_to is not None:
         stmt = stmt.where(Note.start_at < date_to)
     return stmt

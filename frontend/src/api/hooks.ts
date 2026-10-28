@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from './client'
-import type { Note, NoteInput, Page, Tag, TagWithCount, UserSettings } from './types'
+import type { Note, NoteInput, Occurrence, OccurrenceInput, Page, Tag, TagWithCount, UserSettings } from './types'
 
 export const keys = {
   settings: ['settings'] as const,
@@ -68,3 +68,26 @@ export function useNotesPage(params: URLSearchParams) {
     placeholderData: (prev) => prev,
   })
 }
+
+const occUrl = (noteId: number, originalStart: string) =>
+  `/notes/${noteId}/occurrences/${encodeURIComponent(originalStart)}`
+
+export function useOccurrence(noteId: number, originalStart: string) {
+  return useQuery({
+    queryKey: [...keys.notes, 'occurrence', noteId, originalStart],
+    queryFn: () => api<Occurrence>(occUrl(noteId, originalStart)),
+  })
+}
+
+export const useUpdateOccurrence = () =>
+  useNotesMutation(({ noteId, originalStart, ...v }: OccurrenceInput & { noteId: number; originalStart: string }) =>
+    api<Occurrence>(occUrl(noteId, originalStart), { method: 'PATCH', body: JSON.stringify(v) }),
+  )
+export const useCancelOccurrence = () =>
+  useNotesMutation(({ noteId, originalStart }: { noteId: number; originalStart: string }) =>
+    api<void>(occUrl(noteId, originalStart), { method: 'DELETE' }),
+  )
+export const useResetOccurrence = () =>
+  useNotesMutation(({ noteId, originalStart }: { noteId: number; originalStart: string }) =>
+    api<Occurrence>(`${occUrl(noteId, originalStart)}/override`, { method: 'DELETE' }),
+  )

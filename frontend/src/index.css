@@ -60,3 +60,5 @@ button.chip { padding: .15rem .6rem; }
 .form.narrow { max-width: 28rem; }
 .actions { display: flex; gap: .5rem; align-items: center; }
 .upcoming-section { margin-bottom: 1.5rem; } .upcoming-section h2 { margin-bottom: .5rem; }
+.grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: .7rem; }
+.warn { color: #b45309; background: #fffbeb; padding: .4rem .6rem; border-radius: 6px; margin: 0; }

@@ -1,9 +1,10 @@
-from datetime import datetime
+from datetime import date, datetime
 
 from sqlalchemy import (
     Boolean,
     CheckConstraint,
     Column,
+    Date,
     DateTime,
     ForeignKey,
     Index,
@@ -11,6 +12,7 @@ from sqlalchemy import (
     String,
     Table,
     Text,
+    UniqueConstraint,
     func,
     text,
 )
@@ -60,6 +62,10 @@ class Note(TimestampMixin, Base):
     __table_args__ = (
         Index("ix_notes_deleted_start", "deleted_at", "start_at"),
         Index("ix_notes_updated_at", "updated_at"),
+        CheckConstraint("recurrence_freq IN ('none', 'daily', 'weekly', 'monthly')", name="recurrence_freq_valid"),
+        CheckConstraint(
+            "(recurrence_freq = 'none') = (recurrence_until IS NULL)", name="recurrence_until_required"
+        ),
         # Trigram-индексы для поиска создаются миграцией 0001, если доступен pg_trgm (DECISIONS D13).
     )
 
@@ -70,5 +76,47 @@ class Note(TimestampMixin, Base):
     timezone: Mapped[str] = mapped_column(String(64), nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("true"))
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # Правило повторения (DECISIONS D5). until — локальная дата в поясе заметки, включительно.
+    recurrence_freq: Mapped[str] = mapped_column(String(10), nullable=False, server_default="none")
+    recurrence_until: Mapped[date | None] = mapped_column(Date)
 
     tags: Mapped[list[Tag]] = relationship(secondary=note_tags, lazy="selectin", order_by=Tag.name)
+
+    overrides: Mapped[list["OccurrenceOverride"]] = relationship(
+        back_populates="note", cascade="all, delete-orphan", passive_deletes=True, lazy="selectin"
+    )
+
+    @property
+    def is_recurring(self) -> bool:
+        return self.recurrence_freq != "none"
+
+    @property
+    def recurrence(self) -> dict | None:
+        if not self.is_recurring:
+            return None
+        return {"freq": self.recurrence_freq, "until": self.recurrence_until}
+
+
+class OccurrenceOverride(TimestampMixin, Base):
+    """Исключение для одного вхождения серии: изменённые поля или отмена (DECISIONS D5).
+
+    Вхождение идентифицируется original_start — моментом, который даёт правило серии.
+    Поля со значением NULL наследуются от серии.
+    """
+
+    __tablename__ = "occurrence_overrides"
+    __table_args__ = (
+        UniqueConstraint("note_id", "original_start", name="uq_override_note_original"),
+        Index("ix_override_start_at", "start_at"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    note_id: Mapped[int] = mapped_column(ForeignKey("notes.id", ondelete="CASCADE"), nullable=False)
+    original_start: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    is_cancelled: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
+    title: Mapped[str | None] = mapped_column(String(200))
+    body: Mapped[str | None] = mapped_column(Text)
+    start_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    is_active: Mapped[bool | None] = mapped_column(Boolean)
+
+    note: Mapped[Note] = relationship(back_populates="overrides")

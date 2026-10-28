@@ -19,6 +19,14 @@ export interface Note {
   created_at: string
   updated_at: string
   tags: Tag[]
+  recurrence: Recurrence | null
+}
+
+export type Freq = 'daily' | 'weekly' | 'monthly'
+
+export interface Recurrence {
+  freq: Freq
+  until: string // yyyy-mm-dd, локальная дата в поясе заметки, включительно
 }
 
 export interface Page<T> {
@@ -40,6 +48,14 @@ export interface NoteInput {
   timezone: string
   tag_ids: number[]
   is_active: boolean
+  recurrence: Recurrence | null
+}
+
+export interface OccurrenceInput {
+  title?: string
+  body?: string
+  start_at?: string
+  is_active?: boolean
 }
 
 export interface Occurrence {

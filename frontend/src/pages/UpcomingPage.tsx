@@ -53,7 +53,9 @@ function Section({ title, items, tz, empty, timeOnly, hint }: {
       <ul className="note-list">
         {items.map((o) => (
           <li key={`${o.note_id}-${o.original_start}`} className={`note-row ${o.is_active ? '' : 'inactive'}`}>
-            <button className="note-main" onClick={() => open({ kind: 'note', noteId: o.note_id })}>
+            <button className="note-main" onClick={() => open(o.is_recurring
+              ? { kind: 'occurrence', noteId: o.note_id, originalStart: o.original_start }
+              : { kind: 'note', noteId: o.note_id })}>
               <span className="note-time">{timeOnly ? formatTime(o.start_at, tz) : formatDateTime(o.start_at, tz)}</span>
               <span className="note-title">{o.title}</span>
               {o.is_recurring && <span className="muted small" title="Повторяющаяся">↻</span>}

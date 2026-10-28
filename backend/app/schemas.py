@@ -1,5 +1,5 @@
 import re
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from typing import Annotated, Literal
 
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field, PlainSerializer, field_validator
@@ -74,6 +74,11 @@ class TagWithCount(TagOut):
 
 
 # ---------- Notes ----------
+class Recurrence(BaseModel):
+    freq: Literal["daily", "weekly", "monthly"]
+    until: date  # локальная дата окончания (в поясе заметки), включительно
+
+
 class NoteBase(BaseModel):
     title: Annotated[NonEmpty, Field(max_length=200)]
     body: Annotated[str, Field(max_length=20000)] = ""
@@ -81,6 +86,7 @@ class NoteBase(BaseModel):
     timezone: TimeZoneName | None = None  # по умолчанию — часовой пояс пользователя
     tag_ids: Annotated[list[int], Field(min_length=1)]
     is_active: bool = True
+    recurrence: Recurrence | None = None
 
 
 class NoteCreate(NoteBase):
@@ -94,6 +100,7 @@ class NoteUpdate(BaseModel):
     timezone: TimeZoneName | None = None
     tag_ids: Annotated[list[int], Field(min_length=1)] | None = None
     is_active: bool | None = None
+    recurrence: Recurrence | None = None  # явный null — отменить повторение
 
 
 class NoteOut(ORM):
@@ -107,6 +114,7 @@ class NoteOut(ORM):
     created_at: UtcDatetime
     updated_at: UtcDatetime
     tags: list[TagOut]
+    recurrence: Recurrence | None
 
 
 class Page[T](BaseModel):
@@ -165,3 +173,12 @@ class UpcomingOut(ORM):
     today: list[OccurrenceOut]
     week: list[OccurrenceOut]
     overdue: list[OccurrenceOut]
+
+
+class OccurrenceUpdate(BaseModel):
+    """Изменение одного вхождения серии. Не переданные поля не меняются."""
+
+    title: Annotated[NonEmpty, Field(max_length=200)] | None = None
+    body: Annotated[str, Field(max_length=20000)] | None = None
+    start_at: AwareDatetime | None = None
+    is_active: bool | None = None

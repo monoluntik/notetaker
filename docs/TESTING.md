@@ -45,3 +45,5 @@ cd frontend && npm run build                  # проверка типов + с
 | 2026-10-28 12:45 | Э2 | `npm run build` | OK |
 | 2026-10-28 12:47 | Э3 | `pytest -q -s` | 29 passed; perf 5000 заметок: max 0.015 с на запрос |
 | 2026-10-28 12:48 | Э3 | `npm test` / `npm run build` | 7 passed / OK |
+| 2026-10-28 12:51 | Э5 | `pytest -q` | 54 passed (11 unit повторений + 14 API серий/исключений) |
+| 2026-10-28 12:53 | Э5 | `npm run build` / `npm test` / `eslint` | OK / 7 passed / 0 проблем |
