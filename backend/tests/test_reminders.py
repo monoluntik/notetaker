@@ -464,3 +464,45 @@ def test_changing_reminder_interval_moves_the_reminder(client, app, engine, tag)
     assert scan(app, "2026-11-04T09:50:00").created == []  # «за 10 минут» больше нет
     deliver(app, "2026-11-04T09:50:00")
     assert [r["offset_minutes"] for r in rows(engine)] == [60] and len(emails(app)) == 1
+
+
+# --- Текст письма: сколько осталось на самом деле, а не интервал напоминания ---
+
+@pytest.mark.parametrize("seconds, expected", [
+    (-1, "уже началась"),
+    (20, "меньше чем через минуту"),
+    (9 * 60 + 53, "через 10 минут"),  # письмо ушло через несколько секунд после срока
+    (60, "через 1 минуту"),
+    (22 * 60, "через 22 минуты"),
+    (3600, "через 1 час"),
+    (3600 + 5 * 60, "через 1 час 5 минут"),
+    (2 * 3600 + 11 * 60, "через 2 часа 11 минут"),
+    (86400, "через 1 день"),
+    (86400 + 5 * 3600 + 40 * 60, "через 1 день 6 часов"),
+    (2 * 86400 - 10 * 60, "через 2 дня"),
+    (5 * 86400, "через 5 дней"),
+])
+def test_until_text(seconds, expected):
+    from datetime import timedelta
+    assert reminders.until_text(timedelta(seconds=seconds)) == expected
+
+
+def test_email_names_actual_time_left_not_reminder_interval(client, app, tag):
+    """Заметку создали за 5 минут до начала: напоминания «за 1 день» и «за 1 час» не пишут «через 1 день»."""
+    make_note(client, [tag["id"]], title="Soon", start_at="2026-11-04T10:00:00Z", reminders=[60, 1440])
+    scan(app, "2026-11-04T09:55:00")
+    deliver(app, "2026-11-04T09:55:00")
+    bodies = [e.body for e in emails(app)]
+    assert len(bodies) == 2
+    assert all("начнётся через 5 минут" in b and "1 день" not in b and "1 час" not in b for b in bodies)
+
+
+def test_late_email_after_downtime_names_actual_time_left(client, app, tag):
+    """После простоя «за 10 минут» уходит за 1 минуту до начала — так и пишем."""
+    make_note(client, [tag["id"]], title="Late", start_at="2026-11-04T10:00:00Z", reminders=[10])
+    scan(app, "2026-11-04T09:00:00")
+    scan(app, "2026-11-04T09:59:00")  # сервер был недоступен с 09:00 до 09:59
+    deliver(app, "2026-11-04T09:59:00")
+    [e] = emails(app)
+    assert e.subject.startswith("[с опозданием]")
+    assert "начнётся через 1 минуту" in e.body and "10 минут" not in e.body

@@ -1,14 +1,12 @@
 import { useQueryClient } from '@tanstack/react-query'
-import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from 'react'
+import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from 'react'
 import { api } from '../api/client'
 import { keys, useUserTz } from '../api/hooks'
 import type { AppNotification } from '../api/types'
 import { electLeader, pruneClaims, pruneShown, rememberShown, shouldShowSystemNotification, showSystemNotification, wasShown } from '../lib/notify'
-import { formatDateTime } from '../lib/time'
+import { formatDateTime, formatUntil } from '../lib/time'
 import { useOpenEditor } from './NoteEditor'
 import { Icon } from './ui/Icon'
-
-const OFFSET_TEXT: Record<number, string> = { 10: 'через 10 минут', 60: 'через 1 час', 1440: 'через 1 день' }
 
 const ConnectionContext = createContext({ online: false })
 // eslint-disable-next-line react-refresh/only-export-components
@@ -21,9 +19,19 @@ export const useConnection = () => useContext(ConnectionContext)
 export function Realtime({ children }: { children: ReactNode }) {
   const qc = useQueryClient()
   const tz = useUserTz()
+  const tzRef = useRef(tz)  // для обработчика WebSocket: смена пояса не должна переподключать сокет
+  useEffect(() => { tzRef.current = tz }, [tz])
   const open = useOpenEditor()
   const [items, setItems] = useState<AppNotification[]>([])
   const [online, setOnline] = useState(false)
+  // «через N минут» в тостах пересчитывается, пока карточка висит на экране
+  const [now, setNow] = useState(() => new Date())
+  useEffect(() => {
+    if (items.length === 0) return
+    setNow(new Date())
+    const id = setInterval(() => setNow(new Date()), 30_000)
+    return () => clearInterval(id)
+  }, [items.length])
 
   const add = useCallback((list: AppNotification[]) => {
     rememberShown(list.map((n) => n.id))
@@ -63,7 +71,7 @@ export function Realtime({ children }: { children: ReactNode }) {
           add([n])
           // Системное уведомление — только во вкладке-лидере (одно на все вкладки)
           if (shouldShowSystemNotification(n.id, leadership)) {
-            showSystemNotification(n.id, `Напоминание: ${n.title}`, OFFSET_TEXT[n.offset_minutes] ?? '')
+            showSystemNotification(n.id, `Напоминание: ${n.title}`, `${formatUntil(n.occurrence_start, new Date())} · ${formatDateTime(n.occurrence_start, tzRef.current)}`)
           }
         } else if (msg.type === 'notifications_read') {
           const ids = new Set<number>(msg.ids)
@@ -105,7 +113,7 @@ export function Realtime({ children }: { children: ReactNode }) {
             <div key={n.id} className="reminder-toast" data-testid="reminder-toast">
               <strong><Icon name="bell" />{n.title}</strong>
               <span className="small muted">
-                {OFFSET_TEXT[n.offset_minutes]} · {formatDateTime(n.occurrence_start, tz)}{n.late && ' · с опозданием'}
+                {formatUntil(n.occurrence_start, now)} · {formatDateTime(n.occurrence_start, tz)}{n.late && ' · с опозданием'}
               </span>
               <span className="row">
                 <button className="btn btn-sm btn-primary" onClick={() => { markRead([n.id]); open({ kind: 'note', noteId: n.note_id }) }}>Открыть</button>

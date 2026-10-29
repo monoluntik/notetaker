@@ -27,7 +27,6 @@ SCAN_LOCK_KEY = 0x4E6F7465  # произвольная константа для
 MAX_OFFSET = timedelta(minutes=1440)
 MAX_ATTEMPTS = 5
 LATE_THRESHOLD = timedelta(minutes=1)  # позже — считаем отправленным с опозданием (простой)
-OFFSET_TEXT = {10: "через 10 минут", 60: "через 1 час", 1440: "через 1 день"}
 
 
 @dataclass
@@ -144,15 +143,48 @@ def mask_email(addr: str | None) -> str:
     return f"{local[:1]}***@{domain}"
 
 
-def _render_email(d: ReminderDelivery, tz_name: str) -> Email:
+def _plural(n: int, one: str, few: str, many: str) -> str:
+    if n % 10 == 1 and n % 100 != 11:
+        return one
+    if 2 <= n % 10 <= 4 and not 12 <= n % 100 <= 14:
+        return few
+    return many
+
+
+def until_text(delta: timedelta) -> str:
+    """Сколько осталось до начала: «через 1 час 5 минут».
+
+    Считается от момента отправки, а не от интервала напоминания: напоминание «за 1 день» у заметки,
+    созданной за 5 минут до начала, или письмо после простоя иначе называли бы неверный срок.
+    """
+    minutes = round(delta.total_seconds() / 60)
+    if delta.total_seconds() <= 0:
+        return "уже началась"
+    if minutes < 1:
+        return "меньше чем через минуту"
+    days, rest = divmod(minutes, 1440)
+    hours, mins = divmod(rest, 60)
+    if days:  # от суток — с точностью до часа
+        hours += round(mins / 60)
+        if hours == 24:
+            days, hours = days + 1, 0
+        parts = [(days, "день", "дня", "дней"), (hours, "час", "часа", "часов")]
+    else:
+        parts = [(hours, "час", "часа", "часов"), (mins, "минуту", "минуты", "минут")]
+    return "через " + " ".join(f"{n} {_plural(n, *forms)}" for n, *forms in parts if n)
+
+
+def _render_email(d: ReminderDelivery, tz_name: str, now: datetime) -> Email:
     local = d.occurrence_start.astimezone(get_zone(tz_name))
     when = local.strftime("%d.%m.%Y %H:%M")
     prefix = "[с опозданием] " if d.late else ""
+    until = until_text(d.occurrence_start - now)
+    starts = "уже началась" if until == "уже началась" else f"начнётся {until}"
     return Email(
         to=d.email_to or "",
         subject=f"{prefix}Напоминание: {d.title} — {when}",
         body=(
-            f"Заметка «{d.title}» начнётся {OFFSET_TEXT.get(d.offset_minutes, '')}: {when} ({tz_name}).\n"
+            f"Заметка «{d.title}» {starts}: {when} ({tz_name}).\n"
             + ("\nНапоминание отправлено с опозданием: сервер был недоступен в момент срабатывания.\n" if d.late else "")
         ),
         message_id=f"<reminder-{d.note_id}-{int(d.original_start.timestamp())}-{d.offset_minutes}"
@@ -204,7 +236,7 @@ def deliver_pending(db: Session, sender: EmailSender, now: datetime, limit: int 
             log.info("reminder email cancelled: delivery=%s note=%s reason=%s", d.id, d.note_id, reason)
             continue
         try:
-            sender.send(_render_email(d, tz_name))
+            sender.send(_render_email(d, tz_name, now))
         except Exception as exc:  # noqa: BLE001 — любая ошибка адаптера = неудачная попытка
             d.attempts += 1
             d.last_error = f"{type(exc).__name__}: {exc}"[:500]
