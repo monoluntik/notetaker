@@ -8,6 +8,8 @@ import { formatDateTime, formatUntil } from '../lib/time'
 import { useOpenEditor } from './NoteEditor'
 import { Icon } from './ui/Icon'
 
+const MAX_VISIBLE = 3 // больше карточек закрывают страницу; остальные — по кнопке «Ещё N»
+
 const ConnectionContext = createContext({ online: false })
 // eslint-disable-next-line react-refresh/only-export-components
 export const useConnection = () => useContext(ConnectionContext)
@@ -24,6 +26,7 @@ export function Realtime({ children }: { children: ReactNode }) {
   const open = useOpenEditor()
   const [items, setItems] = useState<AppNotification[]>([])
   const [online, setOnline] = useState(false)
+  const [expanded, setExpanded] = useState(false)
   // «через N минут» в тостах пересчитывается, пока карточка висит на экране
   const [now, setNow] = useState(() => new Date())
   useEffect(() => {
@@ -99,17 +102,33 @@ export function Realtime({ children }: { children: ReactNode }) {
       .catch(() => {})
   }
 
+  // Новые напоминания добавляются в конец — в свёрнутом виде видны самые свежие
+  const showAll = expanded && items.length > MAX_VISIBLE
+  const visible = showAll ? items : items.slice(-MAX_VISIBLE)
+  const hidden = items.length - visible.length
+
   return (
     <ConnectionContext.Provider value={{ online }}>
       {children}
       {items.length > 0 && (
-        <div className="toasts" style={{ bottom: undefined, top: 'var(--s4)' }} aria-live="polite" role="region" aria-label="Напоминания">
+        <div className={`toasts reminder-toasts${showAll ? ' expanded' : ''}`} style={{ bottom: undefined, top: 'var(--s4)' }}
+          aria-live="polite" role="region" aria-label="Напоминания">
           {items.length > 1 && (
-            <button className="btn btn-sm" style={{ pointerEvents: 'auto', alignSelf: 'flex-end' }} onClick={() => markRead(items.map((i) => i.id))}>
-              Скрыть все ({items.length})
-            </button>
+            <span className="row" style={{ alignSelf: 'flex-end' }}>
+              {hidden > 0 && (
+                <button className="btn btn-sm" style={{ pointerEvents: 'auto' }} onClick={() => setExpanded(true)} data-testid="reminder-toasts-more">
+                  Ещё {hidden}
+                </button>
+              )}
+              {showAll && items.length > MAX_VISIBLE && (
+                <button className="btn btn-sm" style={{ pointerEvents: 'auto' }} onClick={() => setExpanded(false)}>Свернуть</button>
+              )}
+              <button className="btn btn-sm" style={{ pointerEvents: 'auto' }} onClick={() => markRead(items.map((i) => i.id))}>
+                Скрыть все ({items.length})
+              </button>
+            </span>
           )}
-          {items.map((n) => (
+          {visible.map((n) => (
             <div key={n.id} className="reminder-toast" data-testid="reminder-toast">
               <strong><Icon name="bell" />{n.title}</strong>
               <span className="small muted">

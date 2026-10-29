@@ -97,3 +97,31 @@ test('calendar and upcoming in another tab update without reload', async ({ cont
   await expect(cal.locator('.cal-item', { hasText: 'Синхронизация видов' })).toBeVisible()
   await expect(up.getByText('Синхронизация видов')).toBeVisible()
 })
+
+test('many reminders: at most three cards, the rest behind "more", page stays usable', async ({ page, request }) => {
+  await request.patch('/api/settings', { data: { timezone: 'Asia/Almaty' } })
+  // Непрочитанные напоминания предыдущих сценариев не мешают подсчёту
+  const old = await (await request.get('/api/notifications')).json()
+  if (old.length) await request.post('/api/notifications/read', { data: { ids: old.map((n: { id: number }) => n.id) } })
+
+  await page.goto('/notes')
+  await expectOnline(page)
+  const start = new Date(Date.now() + 10 * 60_000 + 4_000)
+  start.setMilliseconds(0)
+  for (let i = 1; i <= 5; i++) {
+    await request.post('/api/notes', { data: { title: `Стопка ${i}`, start_at: start.toISOString(), reminders: [10] } })
+  }
+
+  const more = page.getByTestId('reminder-toasts-more')
+  await expect(more).toHaveText('Ещё 2', { timeout: 15_000 })
+  await expect(page.getByTestId('reminder-toast')).toHaveCount(3)
+  // Текст — реальный остаток до начала (меньше 10 минут), а не интервал напоминания
+  await expect(page.getByTestId('reminder-toast').first()).toContainText(/через \d+ минут|меньше чем через минуту/)
+  // Карточки не перекрывают кнопку создания заметки
+  await page.getByRole('button', { name: 'Новая заметка' }).click({ trial: true, timeout: 2_000 })
+
+  await more.click()
+  await expect(page.getByTestId('reminder-toast')).toHaveCount(5)
+  await page.getByRole('button', { name: 'Скрыть все (5)' }).click()
+  await expect(page.getByTestId('reminder-toast')).toHaveCount(0)
+})

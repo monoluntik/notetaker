@@ -67,11 +67,11 @@ cd frontend && npm install && npm run dev    # http://localhost:5173 (прокс
 `notetaker` с рабочими данными не затрагивается.
 
 ```bash
-cd backend && ../.venv/bin/pytest -q             # 136 тестов на реальном PostgreSQL (notetaker_test)
+cd backend && ../.venv/bin/pytest -q             # 138 тестов на реальном PostgreSQL (notetaker_test)
 cd backend && ../.venv/bin/alembic check         # модели и миграции совпадают
 cd frontend && npm test                          # vitest, 34 теста
 cd frontend && npm run build && npx eslint src e2e   # проверка типов, сборка, линтер
-cd frontend && npm run e2e                       # Playwright, 17 сценариев (сам поднимает backend :8011 и Vite :5174, БД notetaker_e2e)
+cd frontend && npm run e2e                       # Playwright, 18 сценариев (сам поднимает backend :8011 и Vite :5174, БД notetaker_e2e)
 .venv/bin/python scripts/restart_check.py        # SIGKILL и перезапуск реального процесса + SMTP-приёмник
 ```
 Для e2e нужен Chromium: `cd frontend && npx playwright install chromium` (или путь к браузеру в

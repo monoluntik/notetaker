@@ -161,4 +161,9 @@ backend); Firefox/Safari не проверялись.
 | 06:42 | `npx playwright test` | **17 passed** |
 | 06:42 | `python scripts/restart_check.py` | RESULT: OK |
 | 06:42 | `npm run build` / `npx eslint src e2e` | OK / 0 проблем |
+| 07:34 | `pytest -q` (необязательные теги, Idempotency-Key) | **138 passed** |
+| 07:34 | `alembic upgrade head` на чистой БД (до 0009), `alembic check`, `downgrade 0007` → `upgrade head` | OK, No new upgrade operations detected |
+| 07:34 | `npx vitest run` / `npm run build` / `npx eslint src e2e` | **34 passed** / OK / 0 проблем |
+| 07:35 | `npx playwright test` (новый сценарий: стопка уведомлений) | **18 passed** |
+| 07:36 | `python scripts/restart_check.py` | RESULT: OK |
 
