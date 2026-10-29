@@ -94,7 +94,7 @@ class NoteBase(BaseModel):
     body: Annotated[str, Field(max_length=20000)] = ""
     start_at: AwareDatetime
     timezone: TimeZoneName | None = None  # по умолчанию — часовой пояс пользователя
-    tag_ids: Annotated[list[int], Field(min_length=1)]
+    tag_ids: list[int] = []  # теги необязательны: «у заметки может быть несколько тегов» (D8)
     is_active: bool = True
     recurrence: Recurrence | None = None
     reminders: Reminders = []  # минуты до события: 10, 60, 1440
@@ -109,7 +109,7 @@ class NoteUpdate(BaseModel):
     body: Annotated[str, Field(max_length=20000)] | None = None
     start_at: AwareDatetime | None = None
     timezone: TimeZoneName | None = None
-    tag_ids: Annotated[list[int], Field(min_length=1)] | None = None
+    tag_ids: list[int] | None = None
     is_active: bool | None = None
     recurrence: Recurrence | None = None  # явный null — отменить повторение
     reminders: Reminders | None = None

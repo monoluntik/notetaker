@@ -52,8 +52,9 @@ python3 -m venv .venv
 scripts/dev-db.sh start                       # PostgreSQL 16 на 127.0.0.1:5433 (БД notetaker, notetaker_test, notetaker_e2e)
 
 cd backend && ../.venv/bin/alembic upgrade head
-../.venv/bin/uvicorn app.main:app --port 8001 --reload          # API на :8001
+../.venv/bin/uvicorn app.main:app --port 8001 --reload          # API на :8001 (занимает терминал)
 
+# во втором терминале, из корня репозитория:
 cd frontend && npm install && npm run dev    # http://localhost:5173 (проксирует /api и /ws на :8001)
 ```
 Без Docker письма по умолчанию пишутся в лог backend (`NOTETAKER_EMAIL_BACKEND=console`).
@@ -61,14 +62,16 @@ cd frontend && npm install && npm run dev    # http://localhost:5173 (прокс
 
 ## Тесты
 Требуют запущенной локальной БД (`scripts/dev-db.sh start`) — основная база в Docker не
-используется и не затрагивается.
+используется и не затрагивается. Тесты пересоздают схемы в базах `notetaker_test` и
+`notetaker_e2e` на :5433 (другую базу можно задать через `NOTETAKER_TEST_DATABASE_URL` и `E2E_DATABASE_URL`); база
+`notetaker` с рабочими данными не затрагивается.
 
 ```bash
-cd backend && ../.venv/bin/pytest -q             # 117 тестов на реальном PostgreSQL (notetaker_test)
+cd backend && ../.venv/bin/pytest -q             # 138 тестов на реальном PostgreSQL (notetaker_test)
 cd backend && ../.venv/bin/alembic check         # модели и миграции совпадают
-cd frontend && npm test                          # vitest, 25 тестов
+cd frontend && npm test                          # vitest, 34 теста
 cd frontend && npm run build && npx eslint src e2e   # проверка типов, сборка, линтер
-cd frontend && npm run e2e                       # Playwright, 17 сценариев (сам поднимает backend :8011 и Vite :5174, БД notetaker_e2e)
+cd frontend && npm run e2e                       # Playwright, 18 сценариев (сам поднимает backend :8011 и Vite :5174, БД notetaker_e2e)
 .venv/bin/python scripts/restart_check.py        # SIGKILL и перезапуск реального процесса + SMTP-приёмник
 ```
 Для e2e нужен Chromium: `cd frontend && npx playwright install chromium` (или путь к браузеру в
@@ -135,8 +138,6 @@ docs/      SUBMISSION, PROMPTS, WORKLOG, DECISIONS, TESTING, LOADTEST, UI_AUDIT,
   принял письмо, но до записи статуса, письмо уйдёт повторно (с тем же Message-ID).
 - Поиск находит серию целиком, не указывая, какое вхождение совпало.
 - У тегов нет версий: при одновременном переименовании побеждает последняя запись.
-- Повторная активация отдельного вхождения серии (а не серии целиком) прошедшие напоминания
-  этого вхождения не подавляет.
 - Перетаскивание на сенсорных экранах недоступно (HTML5 DnD) — перенос через форму.
 - Серия не длиннее 5 лет; ежемесячно на 29–31 число — последний день короткого месяца.
 - На 10 млн заметок экраны по всей базе («Предстоящие», календарь без фильтра) отвечают за

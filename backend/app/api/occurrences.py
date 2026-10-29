@@ -65,9 +65,10 @@ def get_occurrence(note_id: int, original_start: datetime, db: Session = Depends
 
 
 @router.patch("/notes/{note_id}/occurrences/{original_start}", response_model=OccurrenceOut)
-def update_occurrence(note_id: int, original_start: datetime, data: OccurrenceUpdate, db: Session = Depends(get_db)):
+def update_occurrence(note_id: int, original_start: datetime, data: OccurrenceUpdate, db: Session = Depends(get_db),
+                      now: datetime = Depends(get_now)):
     """Изменяет только одно вхождение серии (в т.ч. перенос при перетаскивании в календаре)."""
-    return occ_svc.update_occurrence(db, note_id, original_start, data)
+    return occ_svc.update_occurrence(db, note_id, original_start, data, now)
 
 
 @router.delete("/notes/{note_id}/occurrences/{original_start}", status_code=204)
@@ -79,9 +80,9 @@ def cancel_occurrence(note_id: int, original_start: datetime, version: Annotated
 
 @router.delete("/notes/{note_id}/occurrences/{original_start}/override", response_model=OccurrenceOut)
 def reset_occurrence(note_id: int, original_start: datetime, version: Annotated[int, Query()],
-                     db: Session = Depends(get_db)):
+                     db: Session = Depends(get_db), now: datetime = Depends(get_now)):
     """Сбрасывает изменения вхождения к значениям серии (возвращает и удалённое вхождение)."""
-    return occ_svc.reset_occurrence(db, note_id, original_start, version)
+    return occ_svc.reset_occurrence(db, note_id, original_start, version, now)
 
 
 @router.post("/notes/{note_id}/occurrences/{original_start}/split", response_model=NoteOut, status_code=201)

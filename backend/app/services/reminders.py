@@ -16,7 +16,7 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
 from app.email import Email, EmailSender
-from app.models import Note, NoteReminder, ReminderDelivery, SchedulerState
+from app.models import Note, NoteReminder, OccurrenceReminderResume, ReminderDelivery, SchedulerState
 from app.services.occurrences import current_occurrence, occurrences_between
 from app.services.settings import get_settings_row
 from app.timeutil import get_zone
@@ -27,7 +27,6 @@ SCAN_LOCK_KEY = 0x4E6F7465  # произвольная константа для
 MAX_OFFSET = timedelta(minutes=1440)
 MAX_ATTEMPTS = 5
 LATE_THRESHOLD = timedelta(minutes=1)  # позже — считаем отправленным с опозданием (простой)
-OFFSET_TEXT = {10: "через 10 минут", 60: "через 1 час", 1440: "через 1 день"}
 
 
 @dataclass
@@ -61,17 +60,25 @@ def scan(db: Session, now: datetime) -> ScanResult:
     offsets: dict[int, list[int]] = {}
     updated: dict[int, datetime] = {}
     resume: dict[int, datetime | None] = {}
+    occ_resume: dict[tuple[int, datetime], datetime] = {}
     if note_ids:
         for nid, off in db.execute(select(NoteReminder.note_id, NoteReminder.offset_minutes).where(NoteReminder.note_id.in_(note_ids))):
             offsets.setdefault(nid, []).append(off)
         for nid, upd, res in db.execute(select(Note.id, Note.updated_at, Note.reminders_resume_at).where(Note.id.in_(note_ids))):
             updated[nid], resume[nid] = upd, res
+        occ_resume = dict(
+            ((nid, orig), at) for nid, orig, at in db.execute(
+                select(OccurrenceReminderResume.note_id, OccurrenceReminderResume.original_start,
+                       OccurrenceReminderResume.resume_at)
+                .where(OccurrenceReminderResume.note_id.in_(note_ids))
+            )
+        )
     notes_with_reminders = {nid: (sorted(offsets.get(nid, [])), updated[nid]) for nid in note_ids}
     created: list[ReminderDelivery] = []
     missed = 0
     candidates: list[tuple] = []  # (occ, offset, fire_at)
     for occ in occs:
-        resume_at = resume.get(occ.note_id)
+        resume_at = _latest(resume.get(occ.note_id), occ_resume.get((occ.note_id, occ.original_start)))
         for offset in notes_with_reminders[occ.note_id][0]:
             fire_at = occ.start_at - timedelta(minutes=offset)
             # Срок наступил, пока заметка была неактивна или в корзине, — не досылаем (D7)
@@ -136,6 +143,10 @@ def scan(db: Session, now: datetime) -> ScanResult:
     return ScanResult(created=created, missed=missed)
 
 
+def _latest(*moments: datetime | None) -> datetime | None:
+    return max((m for m in moments if m), default=None)
+
+
 def mask_email(addr: str | None) -> str:
     """m***@example.com — адрес в логах без полного раскрытия."""
     if not addr or "@" not in addr:
@@ -144,15 +155,48 @@ def mask_email(addr: str | None) -> str:
     return f"{local[:1]}***@{domain}"
 
 
-def _render_email(d: ReminderDelivery, tz_name: str) -> Email:
+def _plural(n: int, one: str, few: str, many: str) -> str:
+    if n % 10 == 1 and n % 100 != 11:
+        return one
+    if 2 <= n % 10 <= 4 and not 12 <= n % 100 <= 14:
+        return few
+    return many
+
+
+def until_text(delta: timedelta) -> str:
+    """Сколько осталось до начала: «через 1 час 5 минут».
+
+    Считается от момента отправки, а не от интервала напоминания: напоминание «за 1 день» у заметки,
+    созданной за 5 минут до начала, или письмо после простоя иначе называли бы неверный срок.
+    """
+    minutes = round(delta.total_seconds() / 60)
+    if delta.total_seconds() <= 0:
+        return "уже началась"
+    if minutes < 1:
+        return "меньше чем через минуту"
+    days, rest = divmod(minutes, 1440)
+    hours, mins = divmod(rest, 60)
+    if days:  # от суток — с точностью до часа
+        hours += round(mins / 60)
+        if hours == 24:
+            days, hours = days + 1, 0
+        parts = [(days, "день", "дня", "дней"), (hours, "час", "часа", "часов")]
+    else:
+        parts = [(hours, "час", "часа", "часов"), (mins, "минуту", "минуты", "минут")]
+    return "через " + " ".join(f"{n} {_plural(n, *forms)}" for n, *forms in parts if n)
+
+
+def _render_email(d: ReminderDelivery, tz_name: str, now: datetime) -> Email:
     local = d.occurrence_start.astimezone(get_zone(tz_name))
     when = local.strftime("%d.%m.%Y %H:%M")
     prefix = "[с опозданием] " if d.late else ""
+    until = until_text(d.occurrence_start - now)
+    starts = "уже началась" if until == "уже началась" else f"начнётся {until}"
     return Email(
         to=d.email_to or "",
         subject=f"{prefix}Напоминание: {d.title} — {when}",
         body=(
-            f"Заметка «{d.title}» начнётся {OFFSET_TEXT.get(d.offset_minutes, '')}: {when} ({tz_name}).\n"
+            f"Заметка «{d.title}» {starts}: {when} ({tz_name}).\n"
             + ("\nНапоминание отправлено с опозданием: сервер был недоступен в момент срабатывания.\n" if d.late else "")
         ),
         message_id=f"<reminder-{d.note_id}-{int(d.original_start.timestamp())}-{d.offset_minutes}"
@@ -174,7 +218,9 @@ def _obsolete_reason(db: Session, d: ReminderDelivery) -> str | None:
         return "заметка неактивна"
     if occ.start_at != d.occurrence_start:
         return "время заметки изменено"  # для нового времени scan() создаст новое событие
-    if note.reminders_resume_at and d.fire_at < note.reminders_resume_at:
+    occ_resume = db.get(OccurrenceReminderResume, (d.note_id, d.original_start))
+    resume_at = _latest(note.reminders_resume_at, occ_resume.resume_at if occ_resume else None)
+    if resume_at and d.fire_at < resume_at:
         return "срок наступил, пока заметка была неактивна или в корзине"
     return None
 
@@ -204,7 +250,7 @@ def deliver_pending(db: Session, sender: EmailSender, now: datetime, limit: int 
             log.info("reminder email cancelled: delivery=%s note=%s reason=%s", d.id, d.note_id, reason)
             continue
         try:
-            sender.send(_render_email(d, tz_name))
+            sender.send(_render_email(d, tz_name, now))
         except Exception as exc:  # noqa: BLE001 — любая ошибка адаптера = неудачная попытка
             d.attempts += 1
             d.last_error = f"{type(exc).__name__}: {exc}"[:500]

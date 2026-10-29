@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, Depends, Header, Query, status
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_db, get_now
@@ -41,8 +41,10 @@ def list_notes(
 
 
 @router.post("/notes", response_model=NoteOut, status_code=status.HTTP_201_CREATED)
-def create_note(data: NoteCreate, db: Session = Depends(get_db)):
-    return svc.create_note(db, data)
+def create_note(data: NoteCreate, db: Session = Depends(get_db),
+                idempotency_key: Annotated[str | None, Header(max_length=64)] = None):
+    """Idempotency-Key (необязательный): повтор запроса с тем же ключом не создаёт вторую заметку."""
+    return svc.create_note(db, data, idempotency_key)
 
 
 @router.get("/notes/{note_id}", response_model=NoteOut)

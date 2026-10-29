@@ -18,7 +18,7 @@ from aiosmtpd.controller import Controller
 from sqlalchemy import create_engine, text
 
 ROOT = Path(__file__).resolve().parent.parent
-DB = "postgresql+psycopg://postgres@127.0.0.1:5433/notetaker_e2e"
+DB = os.environ.get("E2E_DATABASE_URL", "postgresql+psycopg://postgres@127.0.0.1:5433/notetaker_e2e")
 API = "http://127.0.0.1:8012/api"
 RECEIVED: list[str] = []
 

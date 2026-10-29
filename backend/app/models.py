@@ -66,6 +66,8 @@ class Note(TimestampMixin, Base):
         Index("ix_notes_live_updated", "updated_at", "id", postgresql_where=text("deleted_at IS NULL")),
         Index("ix_notes_series_start", "start_at",
               postgresql_where=text("recurrence_freq <> 'none' AND deleted_at IS NULL")),
+        Index("uq_notes_idempotency_key", "idempotency_key", unique=True,
+              postgresql_where=text("idempotency_key IS NOT NULL")),
         CheckConstraint("recurrence_freq IN ('none', 'daily', 'weekly', 'monthly')", name="recurrence_freq_valid"),
         CheckConstraint(
             "(recurrence_freq = 'none') = (recurrence_until IS NULL)", name="recurrence_until_required"
@@ -88,6 +90,9 @@ class Note(TimestampMixin, Base):
     reminders_resume_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     # Номер версии для обнаружения одновременного редактирования (DECISIONS D14)
     version: Mapped[int] = mapped_column(Integer, nullable=False, server_default="1")
+    # Ключ запроса создания (заголовок Idempotency-Key): повтор того же запроса не создаёт
+    # вторую заметку (DECISIONS D21)
+    idempotency_key: Mapped[str | None] = mapped_column(String(64))
 
     tags: Mapped[list[Tag]] = relationship(secondary=note_tags, lazy="selectin", order_by=Tag.name)
     reminder_rules: Mapped[list["NoteReminder"]] = relationship(
@@ -136,6 +141,21 @@ class OccurrenceOverride(TimestampMixin, Base):
     is_active: Mapped[bool | None] = mapped_column(Boolean)
 
     note: Mapped[Note] = relationship(back_populates="overrides")
+
+
+class OccurrenceReminderResume(Base):
+    """Момент, когда отдельное вхождение серии снова стало активным (DECISIONS D20).
+
+    Напоминания этого вхождения со сроком раньше resume_at не досылаются — как
+    notes.reminders_resume_at для всей заметки. Хранится отдельно от occurrence_overrides:
+    сброс исключения («как в серии») тоже активирует вхождение и не должен терять эту отметку.
+    """
+
+    __tablename__ = "occurrence_reminder_resume"
+
+    note_id: Mapped[int] = mapped_column(ForeignKey("notes.id", ondelete="CASCADE"), primary_key=True)
+    original_start: Mapped[datetime] = mapped_column(DateTime(timezone=True), primary_key=True)
+    resume_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
 REMINDER_OFFSETS = (10, 60, 1440)  # за 10 минут, за 1 час, за 1 день

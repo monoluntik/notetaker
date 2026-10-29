@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { formatTime, fromLocalInput, localDateToUtc, toLocalInput } from './time'
+import { formatTime, formatUntil, fromLocalInput, localDateToUtc, toLocalInput } from './time'
 
 describe('time helpers', () => {
   it('round-trips local input through a timezone', () => {
@@ -19,5 +19,23 @@ describe('time helpers', () => {
     // 8 марта 2026 в Нью-Йорке переход на летнее время: сутки длятся 23 часа
     expect(localDateToUtc('2026-03-08', 'America/New_York')).toBe('2026-03-08T05:00:00Z')
     expect(localDateToUtc('2026-03-08', 'America/New_York', true)).toBe('2026-03-09T04:00:00Z')
+  })
+})
+
+describe('formatUntil', () => {
+  const now = new Date('2026-11-04T09:55:00Z')
+  const at = (sec: number) => new Date(now.getTime() + sec * 1000).toISOString()
+  it.each([
+    [-1, 'уже началась'],
+    [20, 'меньше чем через минуту'],
+    [5 * 60, 'через 5 минут'],
+    [9 * 60 + 53, 'через 10 минут'],
+    [60, 'через 1 минуту'],
+    [22 * 60, 'через 22 минуты'],
+    [3600 + 5 * 60, 'через 1 час 5 минут'],
+    [86400 + 5 * 3600 + 40 * 60, 'через 1 день 6 часов'],
+    [2 * 86400 - 10 * 60, 'через 2 дня'],
+  ])('%i s → %s', (sec, expected) => {
+    expect(formatUntil(at(sec), now)).toBe(expected)
   })
 })

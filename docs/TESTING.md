@@ -146,3 +146,24 @@ backend); Firefox/Safari не проверялись.
 | 18:33 | `npx playwright test` | **17 passed**, 1 письмо в логе |
 | 18:34 | `python scripts/restart_check.py` | RESULT: OK |
 | 18:32–18:34 | контрольная сумма основной БД до/после прогона | одинаковая (`4d7212b5…`) |
+
+## Итерация 5 (исправления по внешней проверке, 2026-10-29)
+Отдельный временный PostgreSQL 16 на :55433 (`NOTETAKER_TEST_DATABASE_URL`, `E2E_DATABASE_URL`).
+
+| Время | Команда | Результат |
+|---|---|---|
+| 06:35 | `pytest -q` до изменений | 117 passed |
+| 06:38 | `pytest tests/test_reminders.py` / `npx vitest run` / `npm run lint` / `tsc -b` | 48 passed / 34 passed / 0 проблем / OK |
+| 06:40 | новые тесты D20 без исправления (код откатан через `git stash`) | 4 failed, 3 passed |
+| 06:40 | они же с исправлением | 7 passed |
+| 06:41 | `pytest -q` | **136 passed** |
+| 06:41 | `alembic upgrade head` на чистой БД, `alembic check`, `downgrade 0007` → `upgrade head` | OK, No new upgrade operations detected |
+| 06:42 | `npx playwright test` | **17 passed** |
+| 06:42 | `python scripts/restart_check.py` | RESULT: OK |
+| 06:42 | `npm run build` / `npx eslint src e2e` | OK / 0 проблем |
+| 07:34 | `pytest -q` (необязательные теги, Idempotency-Key) | **138 passed** |
+| 07:34 | `alembic upgrade head` на чистой БД (до 0009), `alembic check`, `downgrade 0007` → `upgrade head` | OK, No new upgrade operations detected |
+| 07:34 | `npx vitest run` / `npm run build` / `npx eslint src e2e` | **34 passed** / OK / 0 проблем |
+| 07:35 | `npx playwright test` (новый сценарий: стопка уведомлений) | **18 passed** |
+| 07:36 | `python scripts/restart_check.py` | RESULT: OK |
+

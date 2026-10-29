@@ -2,7 +2,7 @@ import { createContext, useCallback, useContext, useEffect, useId, useRef, useSt
 import { useQuery } from '@tanstack/react-query'
 import { DateTime } from 'luxon'
 import { Link } from 'react-router-dom'
-import { api, isEditConflict } from '../api/client'
+import { api, isEditConflict, newIdempotencyKey } from '../api/client'
 import {
   keys, useCancelOccurrence, useCreateNote, useCreateTag, useOccurrence, useResetOccurrence, useRestoreNote,
   useSettings, useSplitSeries, useTags, useTrashNote, useUpdateNote, useUpdateOccurrence, useUserTz,
@@ -155,7 +155,6 @@ function validate(d: NoteDraft): Partial<Record<keyof NoteDraft, string>> {
   if (!d.title.trim()) e.title = 'Введите заголовок'
   if (!d.date) e.date = 'Укажите дату'
   if (!d.time) e.time = 'Укажите время'
-  if (d.tagIds.length === 0) e.tagIds = 'Выберите хотя бы один тег'
   if (d.freq !== 'none' && (!d.until || d.until < d.date)) e.until = 'Дата окончания не может быть раньше даты заметки'
   return e
 }
@@ -169,6 +168,8 @@ function NoteForm({ note, defaultStart, splitFrom, onClose }: {
   const { data: tags = [], isLoading: tagsLoading } = useTags()
   const { data: settings } = useSettings()
   const create = useCreateNote()
+  // Один ключ на открытую форму: повторная отправка той же формы не создаст вторую заметку
+  const createKey = useRef(newIdempotencyKey())
   const update = useUpdateNote()
   const split = useSplitSeries()
   const trash = useTrashNote()
@@ -247,7 +248,7 @@ function NoteForm({ note, defaultStart, splitFrom, onClose }: {
         await update.mutateAsync({ id: note.id, version: version!, ...payload })
         toast('Заметка сохранена')
       } else {
-        await create.mutateAsync(payload)
+        await create.mutateAsync({ ...payload, idempotencyKey: createKey.current })
         toast('Заметка создана')
       }
       onClose()

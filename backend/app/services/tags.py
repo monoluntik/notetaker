@@ -55,20 +55,7 @@ def update_tag(db: Session, tag_id: int, data: TagUpdate) -> Tag:
 
 
 def delete_tag(db: Session, tag_id: int) -> None:
+    """Удаляет тег и снимает его со всех заметок (D8); заметки без тегов допустимы."""
     tag = get_tag(db, tag_id)
-    # Заметки (включая корзину), у которых этот тег — единственный: удаление нарушило бы «≥1 тег».
-    only_tag_notes = (
-        select(note_tags.c.note_id)
-        .group_by(note_tags.c.note_id)
-        .having(func.count() == 1)
-        .having(func.bool_and(note_tags.c.tag_id == tag_id))
-    )
-    titles = db.scalars(select(Note.title).where(Note.id.in_(only_tag_notes)).limit(5)).all()
-    if titles:
-        sample = ", ".join(f"«{t}»" for t in titles)
-        raise Conflict(
-            f"Тег «{tag.name}» — единственный у заметок: {sample}. "
-            "Сначала добавьте этим заметкам другой тег."
-        )
     db.delete(tag)
     db.commit()
