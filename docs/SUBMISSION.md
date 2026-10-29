@@ -41,7 +41,7 @@
 | 10. Внешние сервисы — эмуляция | Почта — Mailpit (SMTP-эмулятор) | на чистом стеке письмо-напоминание пришло в Mailpit, после следующего тика писем по-прежнему одно (18:28) | выполнено |
 | 11. Работает при двух открытых клиентах | WebSocket-синхронизация, проверка версий | e2e: две вкладки, два независимых браузера; pytest `test_concurrency.py` | выполнено |
 | 12. Честное описание состояния | README «Состояние проекта», `LOADTEST.md` «Что остаётся медленным», `TESTING.md` «Не выполнялось» | — | выполнено |
-| 13. Доказуемость | pytest 117, vitest 25, e2e 17, `restart_check.py`, нагрузочный стенд | `docs/TESTING.md` | выполнено |
+| 13. Доказуемость | pytest 136, vitest 34, e2e 17, `restart_check.py`, нагрузочный стенд | `docs/TESTING.md` | выполнено |
 
 ¹ Базовые образы (python, node, nginx, postgres) уже были на машине и заново не скачивались;
 проверка на машине без них не проводилась.
@@ -71,7 +71,7 @@
 | В момент «время − интервал» у активной заметки уходит письмо, ровно одно | планировщик (15 с) + журнал доставок с уникальным ключом, advisory lock, очередь писем `SKIP LOCKED` (D6) | `test_each_reminder_is_delivered_exactly_once`, `test_concurrent_scanners_do_not_duplicate`, `test_concurrent_senders_send_each_email_once`; Mailpit на чистом стеке; e2e — одно письмо на прогон | выполнено ⁴ |
 | Уведомление в интерфейсе в тот же момент во всех открытых вкладках | WebSocket-рассылка | e2e «two tabs: … one reminder shown in both tabs»; `test_two_tabs_receive_same_notification…` | выполнено |
 | Однажды показанное не всплывает снова после обновления страницы | показанные id запоминаются в браузере (исправлено 2026-10-28, коммит 2ea4cc6) | e2e: перезагрузка вкладки — уведомление и системное уведомление не повторяются; vitest `shown once per browser` | выполнено ⁵ |
-| Деактивированная не напоминает; активировали до срока — возвращаются; после срока — прошедшие не досылаются | фильтр активности + `reminders_resume_at` (исправлено 2026-10-28, коммит 8b9ee9f) | `test_inactive_deleted_and_cancelled_get_no_reminders`, `test_reactivated_before_due_keeps_all_reminders`, `test_reactivated_after_due_does_not_send_past_reminders` | выполнено ⁶ |
+| Деактивированная не напоминает; активировали до срока — возвращаются; после срока — прошедшие не досылаются | фильтр активности + `reminders_resume_at` (исправлено 2026-10-28, коммит 8b9ee9f) | `test_inactive_deleted_and_cancelled_get_no_reminders`, `test_reactivated_before_due_keeps_all_reminders`, `test_reactivated_after_due_does_not_send_past_reminders`, `test_occurrence_reactivated_after_due_does_not_send_past_reminders` (отдельное вхождение серии, D20) | выполнено |
 | Изменение времени или интервала переносит напоминания | `fire_at` в ключе события; перепроверка очереди перед отправкой | `test_rescheduling_after_send_creates_new_event_once`, `test_changing_reminder_interval_moves_the_reminder`, `test_pending_email_cancelled_when_note_changed` | выполнено |
 | Удаление отменяет; восстановление из корзины возвращает те, чей срок не наступил | удалённые не сканируются; очередь отменяется; `reminders_resume_at` | `test_pending_email_cancelled_when_note_changed` (случай «заметка удалена»), `test_restored_after_due_returns_only_reminders_not_yet_due` | выполнено |
 | Корзина очищается сама через 30 дней | тик планировщика (`NOTETAKER_TRASH_RETENTION_DAYS`) | `test_trash_autopurge_after_retention_period` | выполнено |
@@ -86,8 +86,6 @@
 ⁴ Строгое «ровно один раз» для внешнего SMTP невозможно в момент сбоя между приёмом письма и
 записью статуса — описано в README и D6.
 ⁵ Запоминание — в браузере: на другом устройстве непрочитанное уведомление покажется один раз.
-⁶ Для повторной активации отдельного вхождения серии (а не всей серии) правило не применяется —
-описано в README.
 
 ## Что не проверено
 - Физические телефоны, экранные дикторы, Firefox и Safari (только Chromium с эмуляцией).
