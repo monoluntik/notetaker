@@ -66,6 +66,8 @@ class Note(TimestampMixin, Base):
         Index("ix_notes_live_updated", "updated_at", "id", postgresql_where=text("deleted_at IS NULL")),
         Index("ix_notes_series_start", "start_at",
               postgresql_where=text("recurrence_freq <> 'none' AND deleted_at IS NULL")),
+        Index("uq_notes_idempotency_key", "idempotency_key", unique=True,
+              postgresql_where=text("idempotency_key IS NOT NULL")),
         CheckConstraint("recurrence_freq IN ('none', 'daily', 'weekly', 'monthly')", name="recurrence_freq_valid"),
         CheckConstraint(
             "(recurrence_freq = 'none') = (recurrence_until IS NULL)", name="recurrence_until_required"
@@ -88,6 +90,9 @@ class Note(TimestampMixin, Base):
     reminders_resume_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     # Номер версии для обнаружения одновременного редактирования (DECISIONS D14)
     version: Mapped[int] = mapped_column(Integer, nullable=False, server_default="1")
+    # Ключ запроса создания (заголовок Idempotency-Key): повтор того же запроса не создаёт
+    # вторую заметку (DECISIONS D21)
+    idempotency_key: Mapped[str | None] = mapped_column(String(64))
 
     tags: Mapped[list[Tag]] = relationship(secondary=note_tags, lazy="selectin", order_by=Tag.name)
     reminder_rules: Mapped[list["NoteReminder"]] = relationship(

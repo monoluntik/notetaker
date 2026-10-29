@@ -47,7 +47,8 @@ type Versioned = { id: number; version: number }
 const v = (version: number) => `version=${version}`
 
 export const useCreateNote = () =>
-  useNotesMutation((body: Omit<NoteInput, 'version'>) => api<Note>('/notes', { method: 'POST', body: JSON.stringify(body) }))
+  useNotesMutation(({ idempotencyKey, ...body }: Omit<NoteInput, 'version'> & { idempotencyKey: string }) =>
+    api<Note>('/notes', { method: 'POST', body: JSON.stringify(body), headers: { 'Idempotency-Key': idempotencyKey } }))
 
 export const useUpdateNote = () =>
   useNotesMutation(({ id, ...body }: Partial<NoteInput> & Versioned) =>

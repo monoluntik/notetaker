@@ -126,3 +126,39 @@ def test_simultaneous_requests_exactly_one_wins(app, raw_client, series, target)
     [t.join() for t in threads]
     assert sorted(codes) == [200] + [409] * 7
     assert get(raw_client, s)["version"] == 2
+
+
+# --- Двойное нажатие «Создать»: Idempotency-Key (D21) ---
+
+NEW = {"title": "Once", "start_at": "2026-11-02T09:00:00Z"}
+
+
+def test_repeated_create_with_same_key_returns_same_note(raw_client):
+    h = {"Idempotency-Key": "k-1"}
+    a = raw_client.post("/api/notes", json=NEW, headers=h)
+    b = raw_client.post("/api/notes", json=NEW, headers=h)
+    assert a.status_code == b.status_code == 201 and a.json()["id"] == b.json()["id"]
+    c = raw_client.post("/api/notes", json=NEW, headers={"Idempotency-Key": "k-2"})
+    assert c.json()["id"] != a.json()["id"]
+    raw_client.post("/api/notes", json=NEW)  # без ключа — как раньше
+    assert raw_client.get("/api/notes", params={"q": "Once"}).json()["total"] == 3
+
+
+def test_concurrent_creates_with_same_key_create_one_note(app, raw_client):
+    barrier = threading.Barrier(8)
+    ids = []
+
+    def worker():
+        with TestClient(app) as c:
+            barrier.wait()
+            r = c.post("/api/notes", json=NEW, headers={"Idempotency-Key": "same"})
+            assert r.status_code == 201, r.text
+            ids.append(r.json()["id"])
+
+    threads = [threading.Thread(target=worker) for _ in range(8)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert len(ids) == 8 and len(set(ids)) == 1
+    assert raw_client.get("/api/notes", params={"q": "Once"}).json()["total"] == 1

@@ -29,6 +29,12 @@ function formatDetail(detail: unknown): string | undefined {
   return undefined
 }
 
+/** Ключ запроса создания: повтор с тем же ключом (двойное нажатие, повтор после обрыва связи)
+ *  не создаёт вторую запись (DECISIONS D21). randomUUID есть только в безопасном контексте. */
+export function newIdempotencyKey(): string {
+  return globalThis.crypto?.randomUUID?.() ?? `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}${Math.random().toString(36).slice(2)}`
+}
+
 export const isConflict = (e: unknown) => e instanceof ApiError && e.status === 409
 export const isEditConflict = (e: unknown) => isConflict(e) && /друг(ой|ом)/.test((e as Error).message)
 export const isNetworkError = (e: unknown) => e instanceof ApiError && e.status === 0

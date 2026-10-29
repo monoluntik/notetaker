@@ -1,6 +1,7 @@
 from datetime import datetime, timedelta
 
 from sqlalchemy import ARRAY, Date, DateTime, Integer, Select, and_, cast, delete, func, literal, or_, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.errors import Conflict, Invalid, NotFound
@@ -68,9 +69,15 @@ def _get_editable(db: Session, note_id: int, expected_version: int | None = None
     return note
 
 
-def create_note(db: Session, data: NoteCreate) -> Note:
+def create_note(db: Session, data: NoteCreate, idempotency_key: str | None = None) -> Note:
+    """Создаёт заметку. Повтор запроса с тем же Idempotency-Key возвращает уже созданную (D21)."""
+    if idempotency_key:
+        existing = db.scalar(select(Note).where(Note.idempotency_key == idempotency_key))
+        if existing is not None:
+            return existing
     tz = data.timezone or get_settings_row(db).timezone
     note = Note(
+        idempotency_key=idempotency_key,
         title=data.title,
         body=data.body,
         start_at=ensure_aware(data.start_at, "start_at"),
@@ -84,7 +91,14 @@ def create_note(db: Session, data: NoteCreate) -> Note:
         note.recurrence_until = data.recurrence.until
     note.reminder_rules = [NoteReminder(offset_minutes=m) for m in data.reminders]
     db.add(note)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError as exc:
+        # Тот же ключ пришёл одновременно в двух запросах: второй вернёт заметку первого
+        db.rollback()
+        if idempotency_key and "uq_notes_idempotency_key" in str(exc.orig):
+            return db.scalars(select(Note).where(Note.idempotency_key == idempotency_key)).one()
+        raise
     return note
 
 
