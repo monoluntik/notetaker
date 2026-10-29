@@ -155,7 +155,6 @@ function validate(d: NoteDraft): Partial<Record<keyof NoteDraft, string>> {
   if (!d.title.trim()) e.title = 'Введите заголовок'
   if (!d.date) e.date = 'Укажите дату'
   if (!d.time) e.time = 'Укажите время'
-  if (d.tagIds.length === 0) e.tagIds = 'Выберите хотя бы один тег'
   if (d.freq !== 'none' && (!d.until || d.until < d.date)) e.until = 'Дата окончания не может быть раньше даты заметки'
   return e
 }

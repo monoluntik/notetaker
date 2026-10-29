@@ -28,7 +28,6 @@ def test_note_validation(client):
     t = make_tag(client)
     base = {"title": "x", "start_at": "2026-11-02T09:00:00Z", "tag_ids": [t["id"]]}
     assert client.post("/api/notes", json=base | {"title": " "}).status_code == 422
-    assert client.post("/api/notes", json=base | {"tag_ids": []}).status_code == 422
     assert client.post("/api/notes", json=base | {"tag_ids": [999]}).status_code == 422
     assert client.post("/api/notes", json=base | {"start_at": "2026-11-02T09:00:00"}).status_code == 422
     assert client.post("/api/notes", json=base | {"timezone": "Mars/Base"}).status_code == 422
@@ -47,7 +46,7 @@ def test_update_note_and_toggle_active(client):
     assert u["body"] == n["body"] and u["start_at"] == n["start_at"]  # не переданные поля не меняются
 
     assert client.patch(f"/api/notes/{n['id']}", json={"is_active": True}).json()["is_active"] is True
-    assert client.patch(f"/api/notes/{n['id']}", json={"tag_ids": []}).status_code == 422
+    assert client.patch(f"/api/notes/{n['id']}", json={"tag_ids": []}).json()["tags"] == []  # теги необязательны (D8)
 
 
 def test_trash_restore_purge(client):
@@ -182,3 +181,10 @@ def test_version_changes_on_trash_restore_and_occurrence_edits(client):
     client.delete(f"/api/notes/{s['id']}")
     client.post(f"/api/notes/{s['id']}/restore")
     assert client.get(f"/api/notes/{s['id']}").json()["version"] == v + 2
+
+
+def test_note_without_tags(client):
+    """«У заметки может быть несколько тегов» — и ни одного (D8)."""
+    r = client.post("/api/notes", json={"title": "No tags", "start_at": "2026-11-02T09:00:00Z"})
+    assert r.status_code == 201 and r.json()["tags"] == []
+    assert client.get("/api/notes", params={"q": "No tags"}).json()["items"][0]["tags"] == []

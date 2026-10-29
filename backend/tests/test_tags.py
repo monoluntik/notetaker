@@ -30,24 +30,18 @@ def test_tag_validation(client):
     assert client.patch("/api/tags/999", json={"name": "a"}).status_code == 404
 
 
-def test_cannot_delete_only_tag_of_note(client):
+def test_delete_tag_unlinks_it_from_notes(client):
+    """Удаление тега снимает его с заметок, включая единственный тег и заметки в корзине (D8)."""
     a = make_tag(client, "a")
     b = make_tag(client, "b")
-    n = make_note(client, [a["id"]], title="Only A")
-    r = client.delete(f"/api/tags/{a['id']}")
-    assert r.status_code == 409 and "Only A" in r.json()["detail"]
-
-    # После добавления второго тега удаление разрешено и тег отвязывается
-    client.patch(f"/api/notes/{n['id']}", json={"tag_ids": [a["id"], b["id"]]})
+    only = make_note(client, [a["id"]], title="Only A")
+    both = make_note(client, [a["id"], b["id"]], title="A and B")
+    trashed = make_note(client, [a["id"]], title="Trashed")
+    client.delete(f"/api/notes/{trashed['id']}")
     assert client.delete(f"/api/tags/{a['id']}").status_code == 204
-    assert [t["name"] for t in client.get(f"/api/notes/{n['id']}").json()["tags"]] == ["b"]
-
-
-def test_only_tag_check_includes_trashed_notes(client):
-    a = make_tag(client, "a")
-    n = make_note(client, [a["id"]])
-    client.delete(f"/api/notes/{n['id']}")
-    assert client.delete(f"/api/tags/{a['id']}").status_code == 409
+    assert client.get(f"/api/notes/{only['id']}").json()["tags"] == []
+    assert [t["name"] for t in client.get(f"/api/notes/{both['id']}").json()["tags"]] == ["b"]
+    assert client.get(f"/api/notes/{trashed['id']}").json()["tags"] == []
 
 
 def test_note_count_excludes_trash(client):

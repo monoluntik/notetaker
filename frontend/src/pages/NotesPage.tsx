@@ -165,10 +165,6 @@ export function NotesPage() {
               <EmptyState icon="search" title="Ничего не найдено" action={<button className="btn" onClick={resetFilters}>Сбросить фильтры</button>}>
                 Попробуйте изменить запрос или условия фильтрации.
               </EmptyState>
-            ) : tags.length === 0 ? (
-              <EmptyState icon="tag" title="Заметок пока нет" action={<Link to="/tags" className="btn btn-primary">Создать тег</Link>}>
-                У каждой заметки есть хотя бы один тег — начните с создания тега. Его можно создать и прямо в форме заметки.
-              </EmptyState>
             ) : (
               <EmptyState icon="note" title="Заметок пока нет" action={<button className="btn btn-primary" onClick={() => open({ kind: 'new' })}><Icon name="plus" />Создать первую заметку</button>}>
                 Заметки привязаны к дате и времени, могут повторяться и напоминать о себе.

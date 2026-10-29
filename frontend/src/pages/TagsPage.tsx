@@ -52,7 +52,7 @@ export function TagsPage() {
       <div className="page-head">
         <div>
           <h1>Теги</h1>
-          <p className="lead">У каждой заметки есть хотя бы один тег. Цвет тега отображается в списке и календаре.</p>
+          <p className="lead">У заметки может быть несколько тегов или ни одного. Цвет тега отображается в списке и календаре.</p>
         </div>
       </div>
 
@@ -113,7 +113,7 @@ function TagCard({ tag }: { tag: TagWithCount }) {
   async function remove() {
     if (!(await confirm({
       title: `Удалить тег «${tag.name}»?`, danger: true, confirmLabel: 'Удалить тег',
-      message: tag.note_count ? `Тег снимется с ${tag.note_count} заметок. Если у заметки это единственный тег, удаление будет отклонено.` : 'Тег не используется в заметках.',
+      message: tag.note_count ? `Тег снимется с ${tag.note_count} заметок, сами заметки останутся.` : 'Тег не используется в заметках.',
     }))) return
     setError(null)
     try {

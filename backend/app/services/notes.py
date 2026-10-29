@@ -157,7 +157,7 @@ def split_series(db: Session, note_id: int, original_start: datetime, data: Note
         start_at=start,
         timezone=tz,
         is_active=data.is_active if "is_active" in fields and data.is_active is not None else note.is_active,
-        tags=_load_tags(db, data.tag_ids) if "tag_ids" in fields and data.tag_ids else list(note.tags),
+        tags=_load_tags(db, data.tag_ids) if "tag_ids" in fields and data.tag_ids is not None else list(note.tags),
         recurrence_freq=rec.freq if rec else "none",
         recurrence_until=rec.until if rec else None,
     )
