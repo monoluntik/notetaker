@@ -52,7 +52,7 @@
 |---|---|---|---|
 | Заметки: заголовок, текст, дата и время, теги, статус; создание, редактирование, удаление, активация/деактивация | `services/notes.py`, `/api/notes`, редактор | `test_create_and_get_note_has_all_fields`, `test_update_note_and_toggle_active`; e2e «create tag and note via UI…» | выполнено |
 | Удалённые попадают в корзину и восстанавливаются | мягкое удаление `deleted_at`, `/restore`, «Корзина» | `test_trash_restore_purge`, `test_empty_trash` | выполнено |
-| Теги: создание, переименование, удаление, цвет; несколько у заметки | `services/tags.py`, страница «Теги» с палитрой | `test_tag_crud`, `test_cannot_delete_only_tag_of_note` | выполнено ² |
+| Теги: создание, переименование, удаление, цвет; несколько у заметки | `services/tags.py`, страница «Теги» с палитрой | `test_tag_crud`, `test_delete_tag_unlinks_it_from_notes`, `test_note_without_tags` | выполнено ² |
 | Повторения: ежедневно, еженедельно, ежемесячно, дата окончания | `services/recurrence.py` + SQL-функции (миграция 0005) | 11 unit-тестов повторений, `test_sql_recurrence.py` (3600 сверок SQL с Python) | выполнено |
 | Отдельное вхождение изменить или удалить, не трогая остальные | `occurrence_overrides`, «Только это вхождение» | `test_edit_single_occurrence_only`, `test_delete_single_occurrence_and_restore_it`; e2e перетаскивания вхождения | выполнено |
 | Напоминания: одно или несколько (10 мин, 1 ч, 1 день) | `note_reminders`, переключатели в редакторе | `test_reminders_api_validation`, `test_each_reminder_is_delivered_exactly_once` | выполнено |
@@ -61,7 +61,7 @@
 | «Ближайшее»: сегодня, неделя, отдельно прошедшие активные | `/api/upcoming`, экран «Предстоящие» | `test_upcoming_sections_in_user_timezone`, `test_overdue_has_no_hidden_cutoff` | выполнено |
 | Настройки: почта, часовой пояс | `/api/settings`, страница «Настройки» | `test_settings_roundtrip`, e2e «changing user timezone…» | выполнено |
 
-² Требуется минимум один тег у заметки (из `TASK.md`); PDF это допускает («может быть несколько»).
+² Теги необязательны, как в PDF («может быть несколько»): заметка без тегов допустима, удаление тега снимает его с заметок (D8).
 ³ На сенсорных экранах перетаскивания нет (HTML5 DnD) — перенос через форму.
 
 ## Задание 1. Notetaker — «Ожидаемое поведение»
