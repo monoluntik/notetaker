@@ -138,6 +138,21 @@ class OccurrenceOverride(TimestampMixin, Base):
     note: Mapped[Note] = relationship(back_populates="overrides")
 
 
+class OccurrenceReminderResume(Base):
+    """Момент, когда отдельное вхождение серии снова стало активным (DECISIONS D20).
+
+    Напоминания этого вхождения со сроком раньше resume_at не досылаются — как
+    notes.reminders_resume_at для всей заметки. Хранится отдельно от occurrence_overrides:
+    сброс исключения («как в серии») тоже активирует вхождение и не должен терять эту отметку.
+    """
+
+    __tablename__ = "occurrence_reminder_resume"
+
+    note_id: Mapped[int] = mapped_column(ForeignKey("notes.id", ondelete="CASCADE"), primary_key=True)
+    original_start: Mapped[datetime] = mapped_column(DateTime(timezone=True), primary_key=True)
+    resume_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
 REMINDER_OFFSETS = (10, 60, 1440)  # за 10 минут, за 1 час, за 1 день
 
 

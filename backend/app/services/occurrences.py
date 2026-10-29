@@ -9,13 +9,14 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 
 from sqlalchemy import select, text
+from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
 from app.errors import Conflict, NotFound
-from app.models import Note, OccurrenceOverride, Tag, note_tags
+from app.models import Note, OccurrenceOverride, OccurrenceReminderResume, Tag, note_tags
 from app.schemas import OccurrenceUpdate
 from app.services.recurrence import is_occurrence, iter_occurrence_starts, local_date
-from app.timeutil import ensure_aware, get_zone
+from app.timeutil import ensure_aware, get_zone, utcnow
 
 
 @dataclass(frozen=True)
@@ -304,11 +305,25 @@ def _check_move(note: Note, original_start: datetime, new_start: datetime) -> No
         raise Conflict(f"На {new_day:%d.%m.%Y} уже есть вхождение этой серии")
 
 
-def update_occurrence(db: Session, note_id: int, original_start: datetime, data: OccurrenceUpdate) -> Occurrence:
+def _remember_reactivation(db: Session, note: Note, orig: datetime, was_active: bool, now: datetime | None) -> None:
+    """Вхождение снова активно: напоминания со сроком раньше этого момента не досылаются (D20)."""
+    if was_active or not build_occurrence(note, orig, _find_override(note, orig)).is_active:
+        return
+    at = now or utcnow()
+    db.execute(
+        insert(OccurrenceReminderResume)
+        .values(note_id=note.id, original_start=orig, resume_at=at)
+        .on_conflict_do_update(index_elements=["note_id", "original_start"], set_={"resume_at": at})
+    )
+
+
+def update_occurrence(db: Session, note_id: int, original_start: datetime, data: OccurrenceUpdate,
+                      now: datetime | None = None) -> Occurrence:
     note, orig = _resolve(db, note_id, original_start, data.version)
     ov = _find_override(note, orig)
     if ov is not None and ov.is_cancelled:
         raise NotFound("Вхождение удалено")
+    was_active = build_occurrence(note, orig, ov).is_active
     if ov is None:
         ov = OccurrenceOverride(note_id=note.id, original_start=orig)
         note.overrides.append(ov)
@@ -323,6 +338,7 @@ def update_occurrence(db: Session, note_id: int, original_start: datetime, data:
         new_start = ensure_aware(data.start_at, "start_at")
         _check_move(note, orig, new_start)
         ov.start_at = None if new_start == orig else new_start
+    _remember_reactivation(db, note, orig, was_active, now)
     note.version += 1
     db.commit()
     db.refresh(note)
@@ -341,12 +357,16 @@ def cancel_occurrence(db: Session, note_id: int, original_start: datetime, versi
     db.commit()
 
 
-def reset_occurrence(db: Session, note_id: int, original_start: datetime, version: int) -> Occurrence:
+def reset_occurrence(db: Session, note_id: int, original_start: datetime, version: int,
+                     now: datetime | None = None) -> Occurrence:
     """Убирает исключение: вхождение снова как в серии (в т.ч. возвращает удалённое)."""
     note, orig = _resolve(db, note_id, original_start, version)
     ov = _find_override(note, orig)
     if ov is not None:
+        # Удалённое вхождение тоже не напоминало: после возврата прошедшие сроки не досылаются
+        was_active = not ov.is_cancelled and build_occurrence(note, orig, ov).is_active
         note.overrides.remove(ov)
+        _remember_reactivation(db, note, orig, was_active, now)
         note.version += 1
         db.commit()
         db.refresh(note)

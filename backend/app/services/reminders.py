@@ -16,7 +16,7 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
 from app.email import Email, EmailSender
-from app.models import Note, NoteReminder, ReminderDelivery, SchedulerState
+from app.models import Note, NoteReminder, OccurrenceReminderResume, ReminderDelivery, SchedulerState
 from app.services.occurrences import current_occurrence, occurrences_between
 from app.services.settings import get_settings_row
 from app.timeutil import get_zone
@@ -60,17 +60,25 @@ def scan(db: Session, now: datetime) -> ScanResult:
     offsets: dict[int, list[int]] = {}
     updated: dict[int, datetime] = {}
     resume: dict[int, datetime | None] = {}
+    occ_resume: dict[tuple[int, datetime], datetime] = {}
     if note_ids:
         for nid, off in db.execute(select(NoteReminder.note_id, NoteReminder.offset_minutes).where(NoteReminder.note_id.in_(note_ids))):
             offsets.setdefault(nid, []).append(off)
         for nid, upd, res in db.execute(select(Note.id, Note.updated_at, Note.reminders_resume_at).where(Note.id.in_(note_ids))):
             updated[nid], resume[nid] = upd, res
+        occ_resume = dict(
+            ((nid, orig), at) for nid, orig, at in db.execute(
+                select(OccurrenceReminderResume.note_id, OccurrenceReminderResume.original_start,
+                       OccurrenceReminderResume.resume_at)
+                .where(OccurrenceReminderResume.note_id.in_(note_ids))
+            )
+        )
     notes_with_reminders = {nid: (sorted(offsets.get(nid, [])), updated[nid]) for nid in note_ids}
     created: list[ReminderDelivery] = []
     missed = 0
     candidates: list[tuple] = []  # (occ, offset, fire_at)
     for occ in occs:
-        resume_at = resume.get(occ.note_id)
+        resume_at = _latest(resume.get(occ.note_id), occ_resume.get((occ.note_id, occ.original_start)))
         for offset in notes_with_reminders[occ.note_id][0]:
             fire_at = occ.start_at - timedelta(minutes=offset)
             # Срок наступил, пока заметка была неактивна или в корзине, — не досылаем (D7)
@@ -133,6 +141,10 @@ def scan(db: Session, now: datetime) -> ScanResult:
             "(downtime %s → %s, policy D7: not sent)", missed, watermark.isoformat(), now.isoformat(),
         )
     return ScanResult(created=created, missed=missed)
+
+
+def _latest(*moments: datetime | None) -> datetime | None:
+    return max((m for m in moments if m), default=None)
 
 
 def mask_email(addr: str | None) -> str:
@@ -206,7 +218,9 @@ def _obsolete_reason(db: Session, d: ReminderDelivery) -> str | None:
         return "заметка неактивна"
     if occ.start_at != d.occurrence_start:
         return "время заметки изменено"  # для нового времени scan() создаст новое событие
-    if note.reminders_resume_at and d.fire_at < note.reminders_resume_at:
+    occ_resume = db.get(OccurrenceReminderResume, (d.note_id, d.original_start))
+    resume_at = _latest(note.reminders_resume_at, occ_resume.resume_at if occ_resume else None)
+    if resume_at and d.fire_at < resume_at:
         return "срок наступил, пока заметка была неактивна или в корзине"
     return None
 

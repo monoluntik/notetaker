@@ -506,3 +506,66 @@ def test_late_email_after_downtime_names_actual_time_left(client, app, tag):
     [e] = emails(app)
     assert e.subject.startswith("[с опозданием]")
     assert "начнётся через 1 минуту" in e.body and "10 минут" not in e.body
+
+
+# --- Отдельное вхождение серии: активировали после срока — прошедшие не досылаются (D20) ---
+
+def _series(client, tag):
+    n = make_note(client, [tag["id"]], start_at="2026-11-04T10:00:00Z", timezone="UTC", reminders=[10, 60],
+                  recurrence={"freq": "daily", "until": "2026-11-07"})
+    return f"/api/notes/{n['id']}/occurrences/2026-11-05T10:00:00Z"
+
+
+def test_occurrence_reactivated_after_due_does_not_send_past_reminders(client, app, engine, tag):
+    url = _series(client, tag)
+    assert client.patch(url, json={"is_active": False}).status_code == 200
+    scan(app, "2026-11-05T08:00:00")
+    assert scan(app, "2026-11-05T09:00:00").created == []  # вхождение неактивно
+    app.state.clock = lambda: T("2026-11-05T09:30:00")  # «за 1 час» (09:00) прошёл, «за 10 минут» — нет
+    assert client.patch(url, json={"is_active": True}).status_code == 200
+    assert scan(app, "2026-11-05T09:30:15").created == []
+    assert [c.offset_minutes for c in scan(app, "2026-11-05T09:50:00").created] == [10]
+    # Остальные вхождения серии напоминают как обычно
+    assert [c.offset_minutes for c in scan(app, "2026-11-06T09:00:00").created] == [60]
+
+
+def test_occurrence_reactivated_before_due_keeps_all_reminders(client, app, tag):
+    url = _series(client, tag)
+    client.patch(url, json={"is_active": False})
+    scan(app, "2026-11-05T08:00:00")
+    app.state.clock = lambda: T("2026-11-05T08:30:00")
+    client.patch(url, json={"is_active": True})
+    assert [c.offset_minutes for c in scan(app, "2026-11-05T09:00:00").created] == [60]
+    assert [c.offset_minutes for c in scan(app, "2026-11-05T09:50:00").created] == [10]
+
+
+@pytest.mark.parametrize("hide", ["deactivate", "delete"])
+def test_occurrence_reset_after_due_does_not_send_past_reminders(client, app, tag, hide):
+    """«Сбросить к серии» тоже возвращает вхождение — в том числе удалённое."""
+    url = _series(client, tag)
+    if hide == "deactivate":
+        client.patch(url, json={"is_active": False})
+    else:
+        assert client.delete(url).status_code == 204
+    scan(app, "2026-11-05T08:00:00")
+    assert scan(app, "2026-11-05T09:00:00").created == []
+    app.state.clock = lambda: T("2026-11-05T09:30:00")
+    assert client.delete(url + "/override").status_code == 200
+    assert scan(app, "2026-11-05T09:30:15").created == []
+    assert [c.offset_minutes for c in scan(app, "2026-11-05T09:50:00").created] == [10]
+
+
+def test_pending_email_not_sent_if_occurrence_was_inactive_at_due(client, app, engine, tag):
+    """Письмо в очереди, срок которого наступил, пока вхождение было выключено, не уходит."""
+    url = _series(client, tag)
+    app.state.email_sender.fail_times = 1
+    scan(app, "2026-11-05T08:00:00")
+    scan(app, "2026-11-05T09:50:00")
+    deliver(app, "2026-11-05T09:50:00")  # почта недоступна — письмо «за 10 минут» осталось в очереди
+    app.state.clock = lambda: T("2026-11-05T09:51:00")
+    client.patch(url, json={"is_active": False})
+    app.state.clock = lambda: T("2026-11-05T09:52:00")
+    client.patch(url, json={"is_active": True})
+    deliver(app, "2026-11-05T09:52:30")
+    assert emails(app) == []
+    assert {r["status"] for r in rows(engine)} == {"cancelled"}
